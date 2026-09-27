@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 The DiamaneOS Project
+# Source carrier activation client: ordinary app UID, no platform signing.
+# Carrier HTTPS, framework SIM authentication/provisioning, jobs and portal UI.
+type diamaneos_ims_entitlement_app, domain, coredomain;
+app_domain(diamaneos_ims_entitlement_app)
+net_domain(diamaneos_ims_entitlement_app)
+binder_use(diamaneos_ims_entitlement_app)
+allow diamaneos_ims_entitlement_app { app_api_service radio_service }:service_manager find;
+
+# No direct modem transport, raw packet interface or Linux capabilities.
+neverallow diamaneos_ims_entitlement_app self:{ qipcrtr_socket tipc_socket packet_socket } create;
+neverallow diamaneos_ims_entitlement_app self:global_capability_class_set *;
+neverallow diamaneos_ims_entitlement_app self:global_capability2_class_set *;
