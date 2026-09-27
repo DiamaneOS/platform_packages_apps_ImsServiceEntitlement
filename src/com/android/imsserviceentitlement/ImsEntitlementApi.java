@@ -30,8 +30,6 @@ import com.android.imsserviceentitlement.debug.DebugUtils;
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration.ClientBehavior;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
-import com.android.imsserviceentitlement.fcm.FcmTokenStore;
-import com.android.imsserviceentitlement.fcm.FcmUtils;
 import com.android.imsserviceentitlement.ts43.Ts43Constants.ResponseXmlAttributes;
 import com.android.imsserviceentitlement.ts43.Ts43SmsOverIpStatus;
 import com.android.imsserviceentitlement.ts43.Ts43VolteStatus;
@@ -111,8 +109,6 @@ public class ImsEntitlementApi {
         ServiceEntitlementRequest.Builder requestBuilder = ServiceEntitlementRequest.builder();
         mLastEntitlementConfiguration.getToken().ifPresent(
                 token -> requestBuilder.setAuthenticationToken(token));
-        FcmUtils.fetchFcmToken(mContext, mSubId);
-        requestBuilder.setNotificationToken(FcmTokenStore.getToken(mContext, mSubId));
         int entitlementVersion = TelephonyUtils.getEntitlementVersion(mContext, mSubId);
         requestBuilder.setEntitlementVersion(entitlementVersion + ".0");
         requestBuilder.setAcceptContentType(ServiceEntitlementRequest.ACCEPT_CONTENT_TYPE_XML);
