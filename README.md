@@ -14,8 +14,9 @@ TS.43 provisioning or a Wi-Fi-calling address portal.
 
 The client keeps SIM authentication and normal TLS certificate/hostname checks.
 It sends no notification token and does not pretend to support push. Server
-validity controls polling, with a daily refresh for active configurations and
-JobScheduler backoff after failure; server-directed stop states remain stopped.
+validity controls polling: shorter validity periods are honored, while longer or
+unlimited validity is refreshed daily. JobScheduler handles retry backoff after
+failure; server-directed stop states remain stopped.
 This cannot reproduce immediate carrier push notifications, and carriers that
 require that transport remain an explicit compatibility limit.
 
