@@ -42,6 +42,8 @@ import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration.ClientBehavior;
 import com.android.imsserviceentitlement.job.JobManager;
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
+import com.android.imsserviceentitlement.utils.HttpsUrl;
+import com.android.imsserviceentitlement.utils.ImsUtils;
 
 /** Watches events and manages service entitlement polling. */
 public class ImsEntitlementReceiver extends BroadcastReceiver {
@@ -62,6 +64,8 @@ public class ImsEntitlementReceiver extends BroadcastReceiver {
 
     @Override
     public void onReceive(Context context, Intent intent) {
+        if (intent == null || !CarrierConfigManager.ACTION_CARRIER_CONFIG_CHANGED.equals(
+                intent.getAction())) return;
         int currentSubId =
                 intent.getIntExtra(
                         SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX,
@@ -74,9 +78,17 @@ public class ImsEntitlementReceiver extends BroadcastReceiver {
         if (!dependencies.userManager.isSystemUser()
                 || !SubscriptionManager.isValidSubscriptionId(currentSubId)
                 || dependencies.telephonyUtils.getSimApplicationState() != SIM_STATE_LOADED
-                || !TelephonyUtils.isImsProvisioningRequired(context, currentSubId)
+                || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(context, currentSubId))
                 || !isEntitlementVersionSupported(context, currentSubId)) {
             return;
+        }
+        if (!TelephonyUtils.isImsProvisioningRequired(context, currentSubId)) {
+            try {
+                if (!ImsUtils.getInstance(context, currentSubId).isWfcEnabledByUser()) return;
+            } catch (RuntimeException unavailable) {
+                Log.w(TAG, "IMS state is not available for this subscription");
+                return;
+            }
         }
 
         String action = intent.getAction();

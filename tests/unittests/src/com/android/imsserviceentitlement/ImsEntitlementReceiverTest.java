@@ -318,6 +318,9 @@ public class ImsEntitlementReceiverTest {
     private void initializeCarrierConfig() {
         if (mCarrierConfig == null) {
             mCarrierConfig = new PersistableBundle();
+            mCarrierConfig.putString(
+                    CarrierConfigManager.ImsServiceEntitlement.KEY_ENTITLEMENT_SERVER_URL_STRING,
+                    "https://carrier.example/entitlement");
             when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfig);
             when(mCarrierConfigManager.getConfigForSubId(LAST_SUB_ID)).thenReturn(mCarrierConfig);
             when(mContext.getSystemService(CarrierConfigManager.class))

@@ -225,7 +225,16 @@ public class ImsEntitlementPollingServiceTest {
     }
 
     @Test
-    public void doV8EntitlementCheck_entitlementResultNull_setAllProvisionedTrue()
+    public void onStartJob_noCarrierEndpoint_noQuery() throws Exception {
+        setImsProvisioningBool(true);
+        mCarrierConfig.putString(
+                CarrierConfigManager.ImsServiceEntitlement.KEY_ENTITLEMENT_SERVER_URL_STRING, "");
+        assertThat(mService.onStartJob(mJobParameters)).isFalse();
+        verify(mImsEntitlementApi, never()).checkEntitlementStatus();
+    }
+
+    @Test
+    public void doV8EntitlementCheck_entitlementResultNull_preservesProvisioning()
             throws Exception {
         setImsProvisioningBool(true);
         setEntitlementVersion(ENTITLEMENT_VERSION_EIGHT);
@@ -235,12 +244,12 @@ public class ImsEntitlementPollingServiceTest {
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
 
-        verify(mImsUtils).setVolteProvisioned(true);
-        verify(mImsUtils).setVowifiProvisioned(true);
-        verify(mImsUtils).setSmsoipProvisioned(true);
-        verify(mImsUtils).setVonrProvisioned(true);
+        verify(mImsUtils, never()).setVolteProvisioned(anyBoolean());
+        verify(mImsUtils, never()).setVowifiProvisioned(anyBoolean());
+        verify(mImsUtils, never()).setSmsoipProvisioned(anyBoolean());
+        verify(mImsUtils, never()).setVonrProvisioned(anyBoolean());
         assertThat(mService.mOngoingTask.getVonrResult())
-                .isEqualTo(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
+                .isEqualTo(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED);
     }
 
     @Test
@@ -362,6 +371,9 @@ public class ImsEntitlementPollingServiceTest {
     private void initializeCarrierConfig() {
         if (mCarrierConfig == null) {
             mCarrierConfig = new PersistableBundle();
+            mCarrierConfig.putString(
+                    CarrierConfigManager.ImsServiceEntitlement.KEY_ENTITLEMENT_SERVER_URL_STRING,
+                    "https://carrier.example/entitlement");
             when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfig);
             when(mContext.getSystemService(CarrierConfigManager.class))
                     .thenReturn(mCarrierConfigManager);

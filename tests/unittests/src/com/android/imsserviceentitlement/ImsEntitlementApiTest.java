@@ -362,7 +362,7 @@ public class ImsEntitlementApiTest {
 
         EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
 
-        assertThat(result.getVowifiStatus().vowifiEntitled()).isFalse();
+        assertThat(result).isNull();
         assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(null);
         assertThat(mEntitlementConfiguration.getToken().isPresent()).isFalse();
         assertThat(mEntitlementConfiguration.getTokenValidity()).isEqualTo(0);
