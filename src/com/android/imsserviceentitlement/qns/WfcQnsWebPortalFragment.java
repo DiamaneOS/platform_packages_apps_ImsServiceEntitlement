@@ -16,6 +16,9 @@
 
 package com.android.imsserviceentitlement;
 
+import com.android.imsserviceentitlement.utils.HttpsUrl;
+
+
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.graphics.Bitmap;
@@ -58,7 +61,14 @@ public class WfcQnsWebPortalFragment extends Fragment {
     View v = inflater.inflate(R.layout.fragment_webview, container, false);
 
     Bundle arguments = getArguments();
-    String url = arguments.getString(URL_KEY);
+    String url = arguments == null ? null : arguments.getString(URL_KEY);
+    if (!HttpsUrl.isAllowed(url)) {
+      if (getActivity() != null) {
+        getActivity().setResult(Activity.RESULT_CANCELED);
+        getActivity().finish();
+      }
+      return v;
+    }
 
     ProgressBar spinner = (ProgressBar) v.findViewById(R.id.loadingbar);
     WebView webView = (WebView) v.findViewById(R.id.webview);
@@ -69,7 +79,7 @@ public class WfcQnsWebPortalFragment extends Fragment {
           @Override
           public boolean shouldOverrideUrlLoading(WebView view, String url) {
             Log.d(TAG, "shouldOverrideUrlLoading()");
-            return false; // Let WebView handle redirected URL
+            return !HttpsUrl.isAllowed(url); // Block non-HTTPS redirects
           }
 
           @Override
@@ -97,6 +107,9 @@ public class WfcQnsWebPortalFragment extends Fragment {
     WebSettings settings = webView.getSettings();
     settings.setDomStorageEnabled(true);
     settings.setJavaScriptEnabled(true);
+    settings.setAllowFileAccess(false);
+    settings.setAllowContentAccess(false);
+    settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
     webView.loadUrl(url);
 

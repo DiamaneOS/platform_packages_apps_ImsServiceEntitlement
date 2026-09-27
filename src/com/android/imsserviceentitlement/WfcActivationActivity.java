@@ -121,6 +121,9 @@ public class WfcActivationActivity extends FragmentActivity implements WfcActiva
     public void setResultAndFinish(int resultCode) {
         Log.d(TAG, "setResultAndFinish: result=" + resultCode);
         if (!isFinishing() && !isDestroyed()) {
+            if (resultCode == Activity.RESULT_OK) {
+                ImsEntitlementPollingService.scheduleRefresh(this, ActivityConstants.getSubId(getIntent()));
+            }
             setResult(resultCode);
             finish();
         }

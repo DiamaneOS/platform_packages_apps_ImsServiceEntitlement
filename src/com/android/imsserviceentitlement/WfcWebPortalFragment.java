@@ -16,6 +16,9 @@
 
 package com.android.imsserviceentitlement;
 
+import com.android.imsserviceentitlement.utils.HttpsUrl;
+
+
 import android.app.Activity;
 import android.graphics.Bitmap;
 import android.os.Bundle;
@@ -67,8 +70,11 @@ public class WfcWebPortalFragment extends Fragment {
         View v = inflater.inflate(R.layout.fragment_webview, container, false);
 
         Bundle arguments = getArguments();
-        Log.d(TAG, "Webview arguments: " + arguments);
-        String url = arguments.getString(KEY_URL_STRING, "");
+        String url = arguments == null ? null : arguments.getString(KEY_URL_STRING, "");
+        if (!HttpsUrl.isAllowed(url)) {
+            ((WfcActivationUi) getActivity()).setResultAndFinish(Activity.RESULT_CANCELED);
+            return v;
+        }
         String postData = arguments.getString(KEY_POST_DATA_STRING, "");
 
         ProgressBar spinner = v.findViewById(R.id.loadingbar);
@@ -77,7 +83,7 @@ public class WfcWebPortalFragment extends Fragment {
                 new WebViewClient() {
                     @Override
                     public boolean shouldOverrideUrlLoading(WebView view, String url) {
-                        return false; // Let WebView handle redirected URL
+                        return !HttpsUrl.isAllowed(url); // Block non-HTTPS redirects
                     }
 
                     @Override
@@ -113,11 +119,14 @@ public class WfcWebPortalFragment extends Fragment {
         WebSettings settings = mWebView.getSettings();
         settings.setDomStorageEnabled(true);
         settings.setJavaScriptEnabled(true);
+        settings.setAllowFileAccess(false);
+        settings.setAllowContentAccess(false);
+        settings.setMixedContentMode(WebSettings.MIXED_CONTENT_NEVER_ALLOW);
 
         if (TextUtils.isEmpty(postData)) {
             mWebView.loadUrl(url);
         } else {
-            mWebView.postUrl(url, postData.getBytes());
+            mWebView.postUrl(url, postData.getBytes(java.nio.charset.StandardCharsets.UTF_8));
         }
         return v;
     }

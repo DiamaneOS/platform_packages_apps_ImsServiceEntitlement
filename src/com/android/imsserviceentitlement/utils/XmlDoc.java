@@ -33,7 +33,6 @@ import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Log;
 
-import com.android.imsserviceentitlement.debug.DebugUtils;
 import com.android.libraries.entitlement.ServiceEntitlement;
 
 import org.w3c.dom.Document;
@@ -41,16 +40,12 @@ import org.w3c.dom.Element;
 import org.w3c.dom.NamedNodeMap;
 import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
-import org.xml.sax.InputSource;
 import org.xml.sax.SAXException;
 
 import java.io.IOException;
-import java.io.StringReader;
 import java.util.Map;
 import java.util.Optional;
 
-import javax.xml.parsers.DocumentBuilder;
-import javax.xml.parsers.DocumentBuilderFactory;
 import javax.xml.parsers.ParserConfigurationException;
 
 /** Wrap the raw content and parse it into nodes. */
@@ -63,10 +58,13 @@ public class XmlDoc {
     private static final String PARM_VALUE = "value";
 
     private final Map<String, Map<String, String>> mNodesMap = new ArrayMap<>();
+    private boolean mValid;
 
     public XmlDoc(String responseBody) {
         parseXmlResponse(responseBody);
     }
+
+    public boolean isValid() { return mValid; }
 
     public Optional<String> getFromToken(String key) {
         Map<String, String> paramsMap = mNodesMap.get(TOKEN);
@@ -116,46 +114,20 @@ public class XmlDoc {
             return;
         }
 
-        if (DebugUtils.isPiiLoggable()) {
-            Log.d(TAG, "Raw Response Body: " + responseBody);
-        }
-        // Workaround: some server doesn't escape "&" in XML response and that will cause XML parser
-        // failure later.
-        // This is a quick impl of escaping w/o intorducing a ton of new dependencies.
-        responseBody = responseBody.replace("&", "&amp;").replace("&amp;amp;", "&amp;");
-
         try {
-            InputSource inputSource = new InputSource(new StringReader(responseBody));
-            DocumentBuilderFactory builderFactory = DocumentBuilderFactory.newInstance();
-            DocumentBuilder docBuilder = builderFactory.newDocumentBuilder();
-            Document doc = docBuilder.parse(inputSource);
-            doc.getDocumentElement().normalize();
-
-            if (DebugUtils.isPiiLoggable()) {
-                Log.d(
-                        TAG,
-                        "parseXmlResponseForNode() Root element: "
-                                + doc.getDocumentElement().getNodeName());
-            }
+            Document doc = CarrierXml.parse(responseBody);
+            if (!"wap-provisioningdoc".equals(doc.getDocumentElement().getNodeName())) return;
 
             NodeList nodeList = doc.getElementsByTagName(NODE_CHARACTERISTIC);
             for (int i = 0; i < nodeList.getLength(); i++) {
-                NamedNodeMap map = nodeList.item(i).getAttributes();
-                if (DebugUtils.isPiiLoggable()) {
-                    Log.d(
-                            TAG,
-                            "parseAuthenticateResponse() node name="
-                                    + nodeList.item(i).getNodeName()
-                                    + " node value="
-                                    + map.item(0).getNodeValue());
-                }
                 Element element = (Element) nodeList.item(i);
                 if (element.getElementsByTagName(NODE_CHARACTERISTIC).getLength() != 0) {
                     continue;
                 }
 
                 Map<String, String> paramsMap = new ArrayMap<>();
-                String characteristicType = map.item(0).getNodeValue();
+                String characteristicType = element.getAttribute("type");
+                if (characteristicType.isEmpty()) continue;
                 String key;
                 paramsMap.putAll(parseParams(element.getElementsByTagName(NODE_PARM)));
                 if (APPLICATION.equals(characteristicType)) {
@@ -165,10 +137,18 @@ public class XmlDoc {
                 } else { // VERS or TOKEN
                     key = characteristicType;
                 }
-                mNodesMap.put(key, paramsMap);
+                if (key != null && !key.isEmpty()) mNodesMap.put(key, paramsMap);
             }
+            mValid = mNodesMap.containsKey(VERS)
+                    || mNodesMap.containsKey(ServiceEntitlement.APP_VOWIFI)
+                    || mNodesMap.containsKey(ServiceEntitlement.APP_VOLTE)
+                    || mNodesMap.containsKey(ServiceEntitlement.APP_SMSOIP)
+                    || mNodesMap.containsKey(LTE + ALL) || mNodesMap.containsKey(LTE + HOME)
+                    || mNodesMap.containsKey(NGRAN + ALL) || mNodesMap.containsKey(NGRAN + HOME)
+                    || mNodesMap.containsKey(NGRAN + ROAMING);
         } catch (ParserConfigurationException | IOException | SAXException e) {
-            Log.e(TAG, "Failed to parse XML node. " + e);
+            mNodesMap.clear();
+            Log.e(TAG, "Invalid carrier entitlement XML");
         }
     }
 
@@ -191,9 +171,6 @@ public class XmlDoc {
             }
             nameValue.put(name, value);
 
-            if (DebugUtils.isPiiLoggable()) {
-                Log.d(TAG, "parseParams() put name '" + name + "' with value " + value);
-            }
         }
         return nameValue;
     }

@@ -26,7 +26,6 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 import androidx.annotation.VisibleForTesting;
 
-import com.android.imsserviceentitlement.debug.DebugUtils;
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration.ClientBehavior;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
@@ -37,6 +36,8 @@ import com.android.imsserviceentitlement.ts43.Ts43VonrStatus;
 import com.android.imsserviceentitlement.ts43.Ts43VowifiStatus;
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
 import com.android.imsserviceentitlement.utils.XmlDoc;
+import com.android.imsserviceentitlement.utils.HttpsUrl;
+import com.android.imsserviceentitlement.utils.CarrierTransport;
 import com.android.libraries.entitlement.CarrierConfig;
 import com.android.libraries.entitlement.ServiceEntitlement;
 import com.android.libraries.entitlement.ServiceEntitlementException;
@@ -72,15 +73,21 @@ public class ImsEntitlementApi {
     public ImsEntitlementApi(Context context, int subId) {
         this.mContext = context;
         this.mSubId = subId;
-        CarrierConfig carrierConfig = getCarrierConfig(context);
+        String serverUrl = TelephonyUtils.getEntitlementServerUrl(context, subId);
+        if (serverUrl == null) serverUrl = "";
+        CarrierConfig carrierConfig = CarrierConfig.builder()
+                .setClientTs43(CarrierConfig.CLIENT_TS_43_IMS_ENTITLEMENT)
+                .setServerUrl(serverUrl)
+                .setUrlConnectionFactory(CarrierTransport::open)
+                .build();
         this.mNeedsImsProvisioning = TelephonyUtils.isImsProvisioningRequired(context, subId);
         this.mServiceEntitlement =
-                new ServiceEntitlement(
+                HttpsUrl.isAllowed(serverUrl) ? new ServiceEntitlement(
                         context,
                         carrierConfig,
                         subId,
                         /* saveHttpHistory = */ false,
-                        DebugUtils.getBypassEapAkaResponse());
+                        /* bypassEapAkaResponse = */ "") : null;
         this.mLastEntitlementConfiguration = new EntitlementConfiguration(context, subId);
     }
 
@@ -105,6 +112,10 @@ public class ImsEntitlementApi {
      */
     @Nullable
     public EntitlementResult checkEntitlementStatus() {
+        if (mServiceEntitlement == null) {
+            Log.w(TAG, "No valid carrier HTTPS endpoint configured");
+            return null;
+        }
         Log.d(TAG, "checkEntitlementStatus subId=" + mSubId);
         ServiceEntitlementRequest.Builder requestBuilder = ServiceEntitlementRequest.builder();
         mLastEntitlementConfiguration.getToken().ifPresent(
@@ -130,6 +141,7 @@ public class ImsEntitlementApi {
                             : ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
                     request);
             entitlementXmlDoc = new XmlDoc(rawXml);
+            if (!entitlementXmlDoc.isValid()) return null;
             mLastEntitlementConfiguration.update(entitlementVersion, rawXml);
             // Reset the retry count if no exception from queryEntitlementStatus()
             mRetryFullAuthenticationCount = AUTHENTICATION_RETRIES;
@@ -149,14 +161,17 @@ public class ImsEntitlementApi {
                         e.getRetryAfter())) {
                     // For handling the case of HTTP_UNAVAILABLE(503), client would perform the
                     // retry for the delay of Retry-After.
-                    Log.d(TAG, "Server asking for retry. retryAfter = " + e.getRetryAfter());
+                    long retryAfter = parseDelaySecondsByRetryAfter(e.getRetryAfter());
+                    if (retryAfter < 0 || retryAfter > Long.MAX_VALUE / 1000) return null;
                     boolean isDefaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
                     return EntitlementResult.builder(isDefaultActive)
-                            .setRetryAfterSeconds(parseDelaySecondsByRetryAfter(e.getRetryAfter()))
+                            .setRetryAfterSeconds(retryAfter)
                             .build();
                 }
             }
-            Log.e(TAG, "queryEntitlementStatus failed", e);
+            // The library exception can contain response bodies and credentials.
+            Log.e(TAG, "Entitlement query failed: code=" + e.getErrorCode()
+                    + " http=" + e.getHttpStatus());
         }
         return entitlementXmlDoc == null ? null : toEntitlementResult(entitlementXmlDoc);
     }
@@ -177,7 +192,7 @@ public class ImsEntitlementApi {
         } catch (DateTimeParseException dateTimeParseException) {
         }
 
-        Log.w(TAG, "Unable to parse retry-after: " + retryAfter + ", ignore it.");
+        Log.w(TAG, "Invalid retry-after header");
         return -1;
     }
 
@@ -209,11 +224,4 @@ public class ImsEntitlementApi {
                 || clientBehavior == ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS_UNTIL_SETTING_ON;
     }
 
-    private CarrierConfig getCarrierConfig(Context context) {
-        String entitlementServiceUrl = TelephonyUtils.getEntitlementServerUrl(context, mSubId);
-        return CarrierConfig.builder()
-                .setClientTs43(CarrierConfig.CLIENT_TS_43_IMS_ENTITLEMENT)
-                .setServerUrl(entitlementServiceUrl)
-                .build();
-    }
 }

@@ -49,6 +49,7 @@ import com.android.imsserviceentitlement.job.JobManager;
 import com.android.imsserviceentitlement.utils.ImsUtils;
 import com.android.imsserviceentitlement.utils.MetricsLogger;
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
+import com.android.imsserviceentitlement.utils.HttpsUrl;
 
 import java.time.Duration;
 
@@ -59,6 +60,7 @@ import java.time.Duration;
  */
 public class ImsEntitlementPollingService extends JobService {
     private static final String TAG = "IMSSE-ImsEntitlementPollingService";
+    private static final long MAX_REFRESH_SECONDS = 24 * 60 * 60;
 
     public static final ComponentName COMPONENT_NAME =
             ComponentName.unflattenFromString(
@@ -104,6 +106,20 @@ public class ImsEntitlementPollingService extends JobService {
                 .queryEntitlementStatusOnceNetworkReady(0, Duration.ofSeconds(delayInSeconds));
     }
 
+    /** Refresh only an active, valid carrier configuration; preserve server stop states. */
+    public static void scheduleRefresh(Context context, int subId) {
+        if (!TelephonyUtils.isActivedSubId(context, subId)
+                || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(context, subId))) return;
+        EntitlementConfiguration configuration = new EntitlementConfiguration(context, subId);
+        ClientBehavior behavior = configuration.entitlementValidation();
+        if (behavior == ClientBehavior.VALID_DURING_VALIDITY) {
+            enqueueJobWithDelay(context, subId,
+                    Math.min(MAX_REFRESH_SECONDS, configuration.getVersValidity()));
+        } else if (behavior == ClientBehavior.VALID_WITHOUT_DURATION) {
+            enqueueJobWithDelay(context, subId, MAX_REFRESH_SECONDS);
+        }
+    }
+
     @Override
     public boolean onStartJob(final JobParameters params) {
         PersistableBundle bundle = params.getExtras();
@@ -118,6 +134,10 @@ public class ImsEntitlementPollingService extends JobService {
         // Ignore the job if the SIM be removed or swapped
         if (!JobManager.isValidJob(this, params)) {
             Log.d(TAG, "Stop for invalid job! " + jobId);
+            return false;
+        }
+        if (!HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(this, subId))) {
+            // No speculative requests, including retries after a carrier change.
             return false;
         }
 
@@ -152,6 +172,7 @@ public class ImsEntitlementPollingService extends JobService {
         private final int mSubid;
         private final int mEntitlementVersion;
         private final boolean mNeedsImsProvisioning;
+        private boolean mReschedule;
 
         // States for metrics
         private long mStartTime;
@@ -195,7 +216,9 @@ public class ImsEntitlementPollingService extends JobService {
         protected void onPostExecute(Void unused) {
             Log.d(TAG, "JobId:" + mParams.getJobId() + "- Task done.");
             sendStatsLogToMetrics();
-            ImsEntitlementPollingService.this.jobFinished(mParams, false);
+            if (mTasks.get(mParams.getJobId()) == this) mTasks.remove(mParams.getJobId());
+            // JobScheduler supplies retry backoff for failures.
+            ImsEntitlementPollingService.this.jobFinished(mParams, mReschedule);
         }
 
         @Override
@@ -216,7 +239,17 @@ public class ImsEntitlementPollingService extends JobService {
         private void doImsEntitlementCheck() {
             try {
                 EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
-                Log.d(TAG, "Entitlement result: " + result);
+                if (isCancelled() || !JobManager.isValidJob(
+                        ImsEntitlementPollingService.this, mParams)) return;
+                if (result == null) {
+                    // A network/parser failure is neither approval nor revocation.
+                    mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+                    mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+                    mVonrResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+                    mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+                    mReschedule = true;
+                    return;
+                }
 
                 if (performRetryIfNeeded(result)) {
                     return;
@@ -225,7 +258,7 @@ public class ImsEntitlementPollingService extends JobService {
                 if (shouldTurnOffWfc(result)) {
                     mImsUtils.setVowifiProvisioned(false);
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
-                } else {
+                } else if (result.getVowifiStatus().vowifiEntitled()) {
                     mImsUtils.setVowifiProvisioned(true);
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
                 }
@@ -260,20 +293,25 @@ public class ImsEntitlementPollingService extends JobService {
                 mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
                 mVonrResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
                 mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
-                Log.d(TAG, "checkEntitlementStatus failed.", e);
+                mReschedule = true;
+                Log.d(TAG, "Entitlement operation unavailable");
+                return;
             }
             checkVersValidity();
         }
 
         @WorkerThread
         private void doWfcEntitlementCheck() {
-            if (!mImsUtils.isWfcEnabledByUser()) {
-                Log.d(TAG, "WFC not turned on; checkEntitlementStatus not needed this time.");
-                return;
-            }
             try {
+                if (!mImsUtils.isWfcEnabledByUser()) return;
                 EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
-                Log.d(TAG, "Entitlement result: " + result);
+                if (isCancelled() || !JobManager.isValidJob(
+                        ImsEntitlementPollingService.this, mParams)) return;
+                if (result == null) {
+                    mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+                    mReschedule = true;
+                    return;
+                }
 
                 if (performRetryIfNeeded(result)) {
                     return;
@@ -287,8 +325,11 @@ public class ImsEntitlementPollingService extends JobService {
                 }
             } catch (RuntimeException e) {
                 mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
-                Log.d(TAG, "checkEntitlementStatus failed.", e);
+                mReschedule = true;
+                Log.d(TAG, "Entitlement operation unavailable");
+                return;
             }
+            checkVersValidity();
         }
 
         /**
@@ -303,7 +344,7 @@ public class ImsEntitlementPollingService extends JobService {
             ImsEntitlementPollingService.enqueueJobWithDelay(
                     ImsEntitlementPollingService.this,
                     mSubid,
-                    result.getRetryAfterSeconds());
+                    Math.max(30, result.getRetryAfterSeconds()));
             return true;
         }
 
@@ -312,15 +353,7 @@ public class ImsEntitlementPollingService extends JobService {
          * during validity.
          */
         private void checkVersValidity() {
-            EntitlementConfiguration lastEntitlementConfiguration =
-                    new EntitlementConfiguration(ImsEntitlementPollingService.this, mSubid);
-            if (lastEntitlementConfiguration.entitlementValidation()
-                    == ClientBehavior.VALID_DURING_VALIDITY) {
-                enqueueJobWithDelay(
-                        ImsEntitlementPollingService.this,
-                        mSubid,
-                        lastEntitlementConfiguration.getVersValidity());
-            }
+            scheduleRefresh(ImsEntitlementPollingService.this, mSubid);
         }
 
         /**
@@ -402,4 +435,3 @@ public class ImsEntitlementPollingService extends JobService {
         }
     }
 }
-
