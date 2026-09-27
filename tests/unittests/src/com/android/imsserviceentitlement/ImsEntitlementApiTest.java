@@ -38,7 +38,6 @@ import androidx.test.runner.AndroidJUnit4;
 
 import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
-import com.android.imsserviceentitlement.fcm.FcmTokenStore;
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
 import com.android.libraries.entitlement.ServiceEntitlement;
 import com.android.libraries.entitlement.ServiceEntitlementException;
@@ -78,7 +77,6 @@ public class ImsEntitlementApiTest {
 
     private static final int SUB_ID = 1;
     private static final int ENTITLEMENT_VERSION = 2;
-    private static final String FCM_TOKEN = "FCM_TOKEN";
     private static final String KEY_DEFAULT_SERVICE_ENTITLEMENT_STATUS_BOOL =
             "imsserviceentitlement.default_service_entitlement_status_bool";
     private static final String RAW_XML =
@@ -189,7 +187,6 @@ public class ImsEntitlementApiTest {
     public void setUp() {
         setImsProvisioningBool(true);
         setDefaultStatus(false);
-        FcmTokenStore.setToken(mContext, SUB_ID, FCM_TOKEN);
         mEntitlementConfiguration.reset();
     }
 
@@ -477,7 +474,6 @@ public class ImsEntitlementApiTest {
             requestBuilder.setAuthenticationToken(token);
         }
         requestBuilder.setEntitlementVersion(String.valueOf(ENTITLEMENT_VERSION_TWO) + ".0");
-        requestBuilder.setNotificationToken(FcmTokenStore.getToken(mContext, SUB_ID));
         requestBuilder.setAcceptContentType(ServiceEntitlementRequest.ACCEPT_CONTENT_TYPE_XML);
         return requestBuilder.build();
     }

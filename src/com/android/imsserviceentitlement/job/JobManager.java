@@ -40,8 +40,6 @@ public class JobManager {
 
     // Query entitlement status
     public static final int QUERY_ENTITLEMENT_STATUS_JOB_ID = 1;
-    // Register FCM to listen push notification, this job not associated with subscription id.
-    public static final int REGISTER_FCM_JOB_ID = 2;
 
     public static final String EXTRA_SLOT_ID = "SLOT_ID";
     public static final String EXTRA_RETRY_COUNT = "RETRY_COUNT";
@@ -140,15 +138,6 @@ public class JobManager {
         mJobScheduler.schedule(job);
     }
 
-    /** Registers FCM service to listen push notification once has network connection. */
-    public void registerFcmOnceNetworkReady() {
-        Log.d(TAG, "Schedule REGISTER_FCM_JOB_ID once has network connection.");
-        JobInfo job =
-                newJobInfoBuilder(REGISTER_FCM_JOB_ID)
-                        .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                        .build();
-        mJobScheduler.schedule(job);
-    }
 
     /**
      * Returns {@code true} if this job's subscription id still actived and still on same slot.
