@@ -235,7 +235,7 @@ public class WfcActivationController {
 
     @MainThread
     private void handleInitialEntitlementStatus(@Nullable EntitlementResult result) {
-        Log.d(TAG, "Initial entitlement result: " + result);
+        Log.d(TAG, "Initial entitlement response received");
         if (result == null) {
             showGeneralErrorUi();
             finishStatsLog(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED);
@@ -313,7 +313,7 @@ public class WfcActivationController {
 
     @MainThread
     private void handleReevaluationEntitlementStatus(@Nullable EntitlementResult result) {
-        Log.d(TAG, "Reevaluation entitlement result: " + result);
+        Log.d(TAG, "Reevaluation entitlement response received");
         if (result == null) { // Network issue
             showGeneralErrorUi();
             finishStatsLog(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED);
