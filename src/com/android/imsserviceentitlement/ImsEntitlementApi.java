@@ -49,6 +49,7 @@ import com.google.common.net.HttpHeaders;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
+import java.util.function.BooleanSupplier;
 
 /** Implementation of the entitlement API. */
 public class ImsEntitlementApi {
@@ -64,7 +65,15 @@ public class ImsEntitlementApi {
     private final ServiceEntitlement mServiceEntitlement;
     private final EntitlementConfiguration mLastEntitlementConfiguration;
 
-    private int mRetryFullAuthenticationCount = AUTHENTICATION_RETRIES;
+    private static final class AcceptedResult {
+        final Object generation;
+        final EntitlementResult result;
+        AcceptedResult(Object generation, EntitlementResult result) {
+            this.generation = generation;
+            this.result = result;
+        }
+    }
+    private volatile AcceptedResult mAcceptedResult;
     private boolean mNeedsImsProvisioning;
 
     @VisibleForTesting
@@ -112,26 +121,53 @@ public class ImsEntitlementApi {
      */
     @Nullable
     public EntitlementResult checkEntitlementStatus() {
+        return checkEntitlementStatus(() -> true);
+    }
+
+    /** The caller's ownership/cancellation check is repeated before any cache mutation. */
+    @Nullable
+    public EntitlementResult checkEntitlementStatus(BooleanSupplier ownerCurrent) {
+        BooleanSupplier current = () -> !Thread.currentThread().isInterrupted()
+                && ownerCurrent.getAsBoolean() && !Thread.currentThread().isInterrupted();
+        mAcceptedResult = null;
+        return checkEntitlementStatus(current, mLastEntitlementConfiguration.generation(),
+                AUTHENTICATION_RETRIES);
+    }
+
+    /** A result can be used only while its accepted cache generation remains current. */
+    public boolean isResultCurrent(EntitlementResult result) {
+        AcceptedResult accepted = mAcceptedResult;
+        return accepted != null && result != null && accepted.result == result
+                && !Thread.currentThread().isInterrupted()
+                && accepted.generation == mLastEntitlementConfiguration.generation()
+                && !Thread.currentThread().isInterrupted();
+    }
+
+    @Nullable
+    private EntitlementResult checkEntitlementStatus(BooleanSupplier current, Object generation,
+            int authenticationRetries) {
+        if (!current.getAsBoolean()) return null;
         if (mServiceEntitlement == null) {
             Log.w(TAG, "No valid carrier HTTPS endpoint configured");
             return null;
         }
         Log.d(TAG, "checkEntitlementStatus subId=" + mSubId);
-        ServiceEntitlementRequest.Builder requestBuilder = ServiceEntitlementRequest.builder();
-        mLastEntitlementConfiguration.getToken().ifPresent(
-                token -> requestBuilder.setAuthenticationToken(token));
         int entitlementVersion = TelephonyUtils.getEntitlementVersion(mContext, mSubId);
-        requestBuilder.setEntitlementVersion(entitlementVersion + ".0");
-        requestBuilder.setAcceptContentType(ServiceEntitlementRequest.ACCEPT_CONTENT_TYPE_XML);
-        if (mNeedsImsProvisioning) {
-            requestBuilder.setConfigurationVersion(
-                    Integer.parseInt(mLastEntitlementConfiguration.getVersion()));
-        }
-        ServiceEntitlementRequest request = requestBuilder.build();
-
-        XmlDoc entitlementXmlDoc = null;
-
         try {
+            ServiceEntitlementRequest request = mLastEntitlementConfiguration.commitIfCurrent(
+                    generation, current, () -> {
+                        ServiceEntitlementRequest.Builder builder = ServiceEntitlementRequest.builder();
+                        mLastEntitlementConfiguration.getToken().ifPresent(
+                                builder::setAuthenticationToken);
+                        builder.setEntitlementVersion(entitlementVersion + ".0");
+                        builder.setAcceptContentType(ServiceEntitlementRequest.ACCEPT_CONTENT_TYPE_XML);
+                        if (mNeedsImsProvisioning) {
+                            builder.setConfigurationVersion(Integer.parseInt(
+                                    mLastEntitlementConfiguration.getVersion()));
+                        }
+                        return builder.build();
+                    });
+            if (request == null) return null;
             String rawXml = mServiceEntitlement.queryEntitlementStatus(
                     mNeedsImsProvisioning
                             ? ImmutableList.of(
@@ -140,23 +176,35 @@ public class ImsEntitlementApi {
                             ServiceEntitlement.APP_SMSOIP)
                             : ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
                     request);
-            entitlementXmlDoc = new XmlDoc(rawXml);
+            XmlDoc entitlementXmlDoc = new XmlDoc(rawXml);
             if (!entitlementXmlDoc.isValid()) return null;
-            mLastEntitlementConfiguration.update(entitlementVersion, rawXml);
-            // Reset the retry count if no exception from queryEntitlementStatus()
-            mRetryFullAuthenticationCount = AUTHENTICATION_RETRIES;
+            ClientBehavior behavior = EntitlementConfiguration.entitlementValidation(entitlementXmlDoc);
+            if (mNeedsImsProvisioning && behavior == ClientBehavior.UNKNOWN_BEHAVIOR) return null;
+            EntitlementResult result = toEntitlementResult(entitlementXmlDoc, behavior);
+            return mLastEntitlementConfiguration.commitIfCurrent(generation, current, () -> {
+                mLastEntitlementConfiguration.update(entitlementVersion, rawXml);
+                if (mNeedsImsProvisioning && isResetToDefault(behavior)) {
+                    mLastEntitlementConfiguration.reset(behavior);
+                }
+                mAcceptedResult = new AcceptedResult(mLastEntitlementConfiguration.generation(), result);
+                return result;
+            });
         } catch (ServiceEntitlementException e) {
             if (e.getErrorCode() == ServiceEntitlementException.ERROR_HTTP_STATUS_NOT_SUCCESS) {
                 if (e.getHttpStatus() == RESPONSE_TOKEN_EXPIRED) {
-                    if (mRetryFullAuthenticationCount <= 0) {
+                    if (authenticationRetries <= 0) {
                         Log.d(TAG, "Ran out of the retry count, stop query status.");
                         return null;
                     }
                     Log.d(TAG, "Server asking for full authentication, retry the query.");
                     // Clean up the cached data and perform full authentication next query.
-                    mLastEntitlementConfiguration.reset();
-                    mRetryFullAuthenticationCount--;
-                    return checkEntitlementStatus();
+                    Object resetGeneration = mLastEntitlementConfiguration.commitIfCurrent(
+                            generation, current, () -> {
+                                mLastEntitlementConfiguration.reset();
+                                return mLastEntitlementConfiguration.generation();
+                            });
+                    if (resetGeneration == null) return null;
+                    return checkEntitlementStatus(current, resetGeneration, authenticationRetries - 1);
                 } else if (e.getHttpStatus() == RESPONSE_RETRY_AFTER && !TextUtils.isEmpty(
                         e.getRetryAfter())) {
                     // For handling the case of HTTP_UNAVAILABLE(503), client would perform the
@@ -164,16 +212,22 @@ public class ImsEntitlementApi {
                     long retryAfter = parseDelaySecondsByRetryAfter(e.getRetryAfter());
                     if (retryAfter < 0 || retryAfter > Long.MAX_VALUE / 1000) return null;
                     boolean isDefaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
-                    return EntitlementResult.builder(isDefaultActive)
-                            .setRetryAfterSeconds(retryAfter)
-                            .build();
+                    return mLastEntitlementConfiguration.commitIfCurrent(generation, current,
+                            () -> {
+                                EntitlementResult result = EntitlementResult.builder(isDefaultActive)
+                                        .setRetryAfterSeconds(retryAfter).build();
+                                mAcceptedResult = new AcceptedResult(generation, result);
+                                return result;
+                            });
                 }
             }
             // The library exception can contain response bodies and credentials.
             Log.e(TAG, "Entitlement query failed: code=" + e.getErrorCode()
                     + " http=" + e.getHttpStatus());
+        } catch (NumberFormatException e) {
+            Log.w(TAG, "Invalid numeric entitlement response");
         }
-        return entitlementXmlDoc == null ? null : toEntitlementResult(entitlementXmlDoc);
+        return null;
     }
 
     /**
@@ -196,14 +250,12 @@ public class ImsEntitlementApi {
         return -1;
     }
 
-    private EntitlementResult toEntitlementResult(XmlDoc doc) {
+    private EntitlementResult toEntitlementResult(XmlDoc doc, ClientBehavior clientBehavior) {
         boolean isDefaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
         EntitlementResult.Builder builder = EntitlementResult.builder(isDefaultActive);
-        ClientBehavior clientBehavior = mLastEntitlementConfiguration.entitlementValidation();
 
         if (mNeedsImsProvisioning && isResetToDefault(clientBehavior)) {
-            // keep the entitlement result in default value and reset the configs.
-            mLastEntitlementConfiguration.reset(clientBehavior);
+            // Keep default values. The shared configuration resets only in the guarded commit.
         } else {
             builder.setVowifiStatus(Ts43VowifiStatus.builder(doc).build())
                     .setVolteStatus(Ts43VolteStatus.builder(doc).build())

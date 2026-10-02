@@ -27,6 +27,8 @@ import com.android.libraries.entitlement.ServiceEntitlement;
 
 import java.util.Optional;
 import java.util.concurrent.TimeUnit;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 /** Provides the entitlement characteristic which stored from previous query. */
 public class EntitlementConfiguration {
@@ -64,23 +66,32 @@ public class EntitlementConfiguration {
                                 + "</wap-provisioningdoc>";
 
     private final EntitlementConfigurationsDataStore mConfigurationsDataStore;
-    private XmlDoc mXmlDoc;
 
     public EntitlementConfiguration(Context context, int subId) {
         mConfigurationsDataStore = EntitlementConfigurationsDataStore.getInstance(context, subId);
-        mXmlDoc = new XmlDoc(mConfigurationsDataStore.getRawXml().orElse(null));
+    }
+
+    public Object generation() {
+        return mConfigurationsDataStore.generation();
+    }
+
+    /** Atomically reject a late result after reset, replacement or cancellation. */
+    public <T> T commitIfCurrent(Object generation, BooleanSupplier current, Supplier<T> action) {
+        return mConfigurationsDataStore.commitIfCurrent(generation, current, action);
+    }
+
+    private XmlDoc document() {
+        return new XmlDoc(mConfigurationsDataStore.getRawXml().orElse(null));
     }
 
     // Updates raw XML only.
     private void update(String rawXml) {
         mConfigurationsDataStore.set(rawXml);
-        mXmlDoc = new XmlDoc(rawXml);
     }
 
     /** Updates entitlement version and raw XML. */
     public void update(int version, String rawXml) {
         mConfigurationsDataStore.set(version, rawXml);
-        mXmlDoc = new XmlDoc(rawXml);
     }
 
     /** Returns the raw XML stored in the {@link EntitlementConfigurationsDataStore}. */
@@ -101,7 +112,7 @@ public class EntitlementConfiguration {
      */
     public Optional<String> getToken() {
         return isTokenInValidityPeriod()
-                ? mXmlDoc.getFromToken(ResponseXmlAttributes.TOKEN)
+                ? document().getFromToken(ResponseXmlAttributes.TOKEN)
                 : Optional.empty();
     }
 
@@ -116,9 +127,8 @@ public class EntitlementConfiguration {
 
         // When the token validity is set to 0, the Entitlement Client shall store the token without
         // any limitation of duration.
-        if (tokenValidityMillis <= 0) {
-            return true;
-        }
+        if (tokenValidityMillis == 0) return true;
+        if (tokenValidityMillis < 0) return false;
 
         return (System.currentTimeMillis() - queryTimeMillis) < tokenValidityMillis;
     }
@@ -128,7 +138,7 @@ public class EntitlementConfiguration {
      * received by the client. If no data exist then returns default value 0.
      */
     public long getTokenValidity() {
-        return mXmlDoc.getFromToken(ResponseXmlAttributes.VALIDITY)
+        return document().getFromToken(ResponseXmlAttributes.VALIDITY)
                 .map(Long::parseLong)
                 .orElse(DEFAULT_VALIDITY);
     }
@@ -138,7 +148,7 @@ public class EntitlementConfiguration {
      * If no data exists then return the default value {@link #DEFAULT_VERSION}.
      */
     public String getVersion() {
-        return mXmlDoc.getFromVersion(ResponseXmlAttributes.VERSION)
+        return document().getFromVersion(ResponseXmlAttributes.VERSION)
                 .orElse(String.valueOf(DEFAULT_VERSION));
     }
 
@@ -147,7 +157,7 @@ public class EntitlementConfiguration {
      * received by the client. If no data exist then returns default value 0.
      */
     public long getVersValidity() {
-        return mXmlDoc.getFromVersion(ResponseXmlAttributes.VALIDITY)
+        return document().getFromVersion(ResponseXmlAttributes.VALIDITY)
                 .map(Long::parseLong)
                 .orElse(DEFAULT_VALIDITY);
     }
@@ -177,8 +187,15 @@ public class EntitlementConfiguration {
 
     /** Returns {@link ClientBehavior} for the service to be configured. */
     public ClientBehavior entitlementValidation() {
-        int version = Integer.parseInt(getVersion());
-        long validity = getVersValidity();
+        return entitlementValidation(document());
+    }
+
+    /** Validate the proposed response before changing the shared cache. */
+    public static ClientBehavior entitlementValidation(XmlDoc document) {
+        int version = Integer.parseInt(document.getFromVersion(ResponseXmlAttributes.VERSION)
+                .orElse(String.valueOf(DEFAULT_VERSION)));
+        long validity = document.getFromVersion(ResponseXmlAttributes.VALIDITY)
+                .map(Long::parseLong).orElse(DEFAULT_VALIDITY);
 
         if (version > 0 && validity > 0) {
             return ClientBehavior.VALID_DURING_VALIDITY;
