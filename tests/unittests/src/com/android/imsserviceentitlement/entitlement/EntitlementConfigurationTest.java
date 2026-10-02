@@ -141,4 +141,36 @@ public class EntitlementConfigurationTest {
         assertThat(mConfiguration.getEntitlementVersion()).isEqualTo(ENTITLEMENT_VERSION);
         assertThat(mConfiguration.getVersion()).isEqualTo("0");
     }
+
+    @Test
+    public void resetAnotherInstance_invalidatesOldTokenAndPendingCommit() {
+        mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        Object generation = mConfiguration.generation();
+        new EntitlementConfiguration(mContext, SUB_ID).reset();
+        assertThat(mConfiguration.getToken().isPresent()).isFalse();
+        Boolean committed = mConfiguration.commitIfCurrent(generation, () -> true, () -> {
+            mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+            return true;
+        });
+        assertThat(committed).isNull();
+        assertThat(mConfiguration.getRawXml()).isNull();
+    }
+
+    @Test
+    public void cancelledCommit_doesNotWrite() {
+        Boolean committed = mConfiguration.commitIfCurrent(mConfiguration.generation(),
+                () -> false, () -> {
+                    mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+                    return true;
+                });
+        assertThat(committed).isNull();
+        assertThat(mConfiguration.getRawXml()).isNull();
+    }
+
+    @Test
+    public void negativeTokenValidity_isNotUnlimited() {
+        mConfiguration.update(ENTITLEMENT_VERSION,
+                RAW_XML.replace("value=\"3600\"", "value=\"-1\""));
+        assertThat(mConfiguration.getToken().isPresent()).isFalse();
+    }
 }

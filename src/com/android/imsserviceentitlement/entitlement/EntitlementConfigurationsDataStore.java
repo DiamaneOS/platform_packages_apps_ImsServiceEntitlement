@@ -21,6 +21,8 @@ import android.content.SharedPreferences;
 import android.util.SparseArray;
 
 import java.util.Optional;
+import java.util.function.BooleanSupplier;
+import java.util.function.Supplier;
 
 class EntitlementConfigurationsDataStore {
     private static final String PREFERENCE_ENTITLEMENT_CHARACTERISTICS =
@@ -30,11 +32,14 @@ class EntitlementConfigurationsDataStore {
     private static final String QUERY_TIME_MILLIS = "QUERY_TIME_MILLIS";
 
     private final SharedPreferences mPreferences;
+    // Identity, rather than a wrapping counter: an old request cannot commit
+    // after a reset or another writer, even if the stored XML becomes identical.
+    private Object mGeneration = new Object();
 
     private static final SparseArray<EntitlementConfigurationsDataStore> sInstances =
             new SparseArray<>();
 
-    public static EntitlementConfigurationsDataStore getInstance(Context context, int subId) {
+    public static synchronized EntitlementConfigurationsDataStore getInstance(Context context, int subId) {
         if (sInstances.get(subId) == null) {
             sInstances.put(subId, new EntitlementConfigurationsDataStore(context, subId));
         }
@@ -47,7 +52,8 @@ class EntitlementConfigurationsDataStore {
                 Context.MODE_PRIVATE);
     }
 
-    public void set(int entitlementVersion, String characteristics) {
+    public synchronized void set(int entitlementVersion, String characteristics) {
+        mGeneration = new Object();
         mPreferences
                 .edit()
                 .putString(XML_DOCUMENT, characteristics)
@@ -56,7 +62,8 @@ class EntitlementConfigurationsDataStore {
                 .apply();
     }
 
-    public void set(String characteristics) {
+    public synchronized void set(String characteristics) {
+        mGeneration = new Object();
         mPreferences
                 .edit()
                 .putString(XML_DOCUMENT, characteristics)
@@ -64,15 +71,27 @@ class EntitlementConfigurationsDataStore {
                 .apply();
     }
 
-    public Optional<String> getRawXml() {
+    public synchronized Optional<String> getRawXml() {
         return Optional.ofNullable(mPreferences.getString(XML_DOCUMENT, null));
     }
 
-    public long getQueryTimeMillis() {
+    public synchronized long getQueryTimeMillis() {
         return mPreferences.getLong(QUERY_TIME_MILLIS, 0);
     }
 
-    public Optional<String> getEntitlementVersion() {
+    public synchronized Optional<String> getEntitlementVersion() {
         return Optional.ofNullable(mPreferences.getString(ENTITLEMENT_VERSION, null));
+    }
+
+    synchronized Object generation() {
+        return mGeneration;
+    }
+
+    /** The action is a bounded local commit, never a carrier/network operation. */
+    synchronized <T> T commitIfCurrent(Object generation, BooleanSupplier current,
+            Supplier<T> action) {
+        if (generation != mGeneration || !current.getAsBoolean()
+                || generation != mGeneration) return null;
+        return action.get();
     }
 }

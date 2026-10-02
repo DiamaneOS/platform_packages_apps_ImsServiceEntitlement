@@ -238,9 +238,11 @@ public class ImsEntitlementPollingService extends JobService {
         @WorkerThread
         private void doImsEntitlementCheck() {
             try {
-                EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+                EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus(
+                        () -> !isCancelled() && JobManager.isValidJob(
+                                ImsEntitlementPollingService.this, mParams) && !isCancelled());
                 if (isCancelled() || !JobManager.isValidJob(
-                        ImsEntitlementPollingService.this, mParams)) return;
+                        ImsEntitlementPollingService.this, mParams) || isCancelled()) return;
                 if (result == null) {
                     // A network/parser failure is neither approval nor revocation.
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
@@ -251,6 +253,7 @@ public class ImsEntitlementPollingService extends JobService {
                     return;
                 }
 
+                if (!isCurrentResult(result)) return;
                 if (performRetryIfNeeded(result)) {
                     return;
                 }
@@ -263,6 +266,7 @@ public class ImsEntitlementPollingService extends JobService {
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
                 }
 
+                if (!isCurrentResult(result)) return;
                 if (shouldTurnOffVolte(result)) {
                     mImsUtils.setVolteProvisioned(false);
                     mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
@@ -271,6 +275,7 @@ public class ImsEntitlementPollingService extends JobService {
                     mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
                 }
 
+                if (!isCurrentResult(result)) return;
                 if (mEntitlementVersion >= ENTITLEMENT_VERSION_EIGHT) {
                     if (shouldTurnOffVonrHome(result)) {
                         mImsUtils.setVonrProvisioned(false);
@@ -281,6 +286,7 @@ public class ImsEntitlementPollingService extends JobService {
                     }
                 }
 
+                if (!isCurrentResult(result)) return;
                 if (shouldTurnOffSMSoIP(result)) {
                     mImsUtils.setSmsoipProvisioned(false);
                     mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
@@ -304,15 +310,18 @@ public class ImsEntitlementPollingService extends JobService {
         private void doWfcEntitlementCheck() {
             try {
                 if (!mImsUtils.isWfcEnabledByUser()) return;
-                EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+                EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus(
+                        () -> !isCancelled() && JobManager.isValidJob(
+                                ImsEntitlementPollingService.this, mParams) && !isCancelled());
                 if (isCancelled() || !JobManager.isValidJob(
-                        ImsEntitlementPollingService.this, mParams)) return;
+                        ImsEntitlementPollingService.this, mParams) || isCancelled()) return;
                 if (result == null) {
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
                     mReschedule = true;
                     return;
                 }
 
+                if (!isCurrentResult(result)) return;
                 if (performRetryIfNeeded(result)) {
                     return;
                 }
@@ -330,6 +339,14 @@ public class ImsEntitlementPollingService extends JobService {
                 return;
             }
             checkVersValidity();
+        }
+
+        private boolean isCurrentResult(EntitlementResult result) {
+            // No cache monitor is held across framework Binder setters. Check again
+            // after subscription lookups and before each provisioning operation.
+            return !isCancelled() && JobManager.isValidJob(
+                    ImsEntitlementPollingService.this, mParams) && !isCancelled()
+                    && mImsEntitlementApi.isResultCurrent(result);
         }
 
         /**

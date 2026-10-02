@@ -95,6 +95,7 @@ public class ImsEntitlementPollingServiceTest {
         mService.onCreate();
         mService.onBind(null);
         mService.injectImsEntitlementApi(mImsEntitlementApi);
+        when(mImsEntitlementApi.isResultCurrent(any())).thenReturn(true);
         mScheduler = mContext.getSystemService(JobScheduler.class);
         setActivedSubscription();
         setupImsUtils();
@@ -116,14 +117,14 @@ public class ImsEntitlementPollingServiceTest {
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
 
-        verify(mImsEntitlementApi, never()).checkEntitlementStatus();
+        verify(mImsEntitlementApi, never()).checkEntitlementStatus(any());
     }
 
 
     @Test
     public void doEntitlementCheck_shouldTurnOffWfc_disableWfc() throws Exception {
         EntitlementResult entitlementResult = getEntitlementResult(sDisableVoWiFi);
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -134,7 +135,7 @@ public class ImsEntitlementPollingServiceTest {
     @Test
     public void doEntitlementCheck_shouldNotTurnOffWfc_enableWfc() throws Exception {
         EntitlementResult entitlementResult = getEntitlementResult(sEnableVoWiFi);
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -150,7 +151,7 @@ public class ImsEntitlementPollingServiceTest {
                 sDisableVoLte,
                 sDisableSmsoverip
         );
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -171,7 +172,7 @@ public class ImsEntitlementPollingServiceTest {
         EntitlementResult entitlementResult =
                 getImsEntitlementResult(
                         sDisableVoWiFi, sDisableVoLte, sDisableVonr, sDisableSmsoverip);
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -192,7 +193,7 @@ public class ImsEntitlementPollingServiceTest {
                 sEnableVoLte,
                 sEnableSmsoverip
         );
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -211,7 +212,7 @@ public class ImsEntitlementPollingServiceTest {
         setEntitlementVersion(ENTITLEMENT_VERSION_EIGHT);
         EntitlementResult entitlementResult =
                 getImsEntitlementResult(sEnableVoWiFi, sEnableVoLte, sEnableVonr, sEnableSmsoverip);
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -230,7 +231,7 @@ public class ImsEntitlementPollingServiceTest {
         mCarrierConfig.putString(
                 CarrierConfigManager.ImsServiceEntitlement.KEY_ENTITLEMENT_SERVER_URL_STRING, "");
         assertThat(mService.onStartJob(mJobParameters)).isFalse();
-        verify(mImsEntitlementApi, never()).checkEntitlementStatus();
+        verify(mImsEntitlementApi, never()).checkEntitlementStatus(any());
     }
 
     @Test
@@ -239,7 +240,7 @@ public class ImsEntitlementPollingServiceTest {
         setImsProvisioningBool(true);
         setEntitlementVersion(ENTITLEMENT_VERSION_EIGHT);
         EntitlementResult entitlementResult = null;
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -257,7 +258,7 @@ public class ImsEntitlementPollingServiceTest {
         setImsProvisioningBool(true);
         EntitlementResult entitlementResult =
                 EntitlementResult.builder(false).setRetryAfterSeconds(120).build();
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -278,7 +279,7 @@ public class ImsEntitlementPollingServiceTest {
     public void doEntitlementCheck_WfcEntitlementShouldRetry_rescheduleJob() throws Exception {
         EntitlementResult entitlementResult =
                 EntitlementResult.builder(false).setRetryAfterSeconds(120).build();
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenReturn(entitlementResult);
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(entitlementResult);
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -298,7 +299,7 @@ public class ImsEntitlementPollingServiceTest {
     @Test
     public void doEntitlementCheck_runtimeException_entitlementUpdateFail() throws Exception {
         setImsProvisioningBool(true);
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenThrow(new RuntimeException());
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenThrow(new RuntimeException());
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.
@@ -309,7 +310,7 @@ public class ImsEntitlementPollingServiceTest {
 
     @Test
     public void doWfcEntitlementCheck_runtimeException_entitlementUpdateFail() throws Exception {
-        when(mImsEntitlementApi.checkEntitlementStatus()).thenThrow(new RuntimeException());
+        when(mImsEntitlementApi.checkEntitlementStatus(any())).thenThrow(new RuntimeException());
 
         mService.onStartJob(mJobParameters);
         mService.mOngoingTask.get(); // wait for job finish.

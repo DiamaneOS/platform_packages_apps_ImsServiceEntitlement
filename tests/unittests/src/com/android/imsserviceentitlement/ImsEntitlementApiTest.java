@@ -70,7 +70,6 @@ public class ImsEntitlementApiTest {
     @Spy private Context mContext = ApplicationProvider.getApplicationContext();
 
     @Mock private ServiceEntitlement mMockServiceEntitlement;
-    @Mock private EntitlementConfiguration mMockEntitlementConfiguration;
     @Mock private CarrierConfigManager mCarrierConfigManager;
 
     private PersistableBundle mCarrierConfig;
@@ -372,7 +371,8 @@ public class ImsEntitlementApiTest {
     @Test
     public void checkEntitlementStatus_httpResponse511_dataStoreReset() throws Exception {
         setImsProvisioningBool(false);
-        setupImsEntitlementApi(mMockEntitlementConfiguration);
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
         when(mMockServiceEntitlement.queryEntitlementStatus(
                 eq(ImmutableList.of(ServiceEntitlement.APP_VOWIFI)), any()))
                 .thenThrow(
@@ -381,8 +381,85 @@ public class ImsEntitlementApiTest {
 
         EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
 
-        verify(mMockEntitlementConfiguration).reset();
+        assertThat(mEntitlementConfiguration.getRawXml()).isNull();
         assertThat(result).isNull();
+    }
+
+    @Test
+    public void checkEntitlementStatus_simResetDuringResponse_doesNotRepopulateCache() throws Exception {
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenAnswer(invocation -> {
+            new EntitlementConfiguration(mContext, SUB_ID).reset();
+            return RAW_XML_NEW_TOKEN;
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isNull();
+        assertThat(mEntitlementConfiguration.getToken().isPresent()).isFalse();
+    }
+
+    @Test
+    public void checkEntitlementStatus_cancelledDuringResponse_preservesCache() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenAnswer(invocation -> {
+            current.set(false);
+            return RAW_XML_NEW_TOKEN;
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus(current::get)).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML);
+    }
+
+    @Test
+    public void checkEntitlementStatus_oldExpiredTokenResponse_doesNotResetReplacement() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenAnswer(invocation -> {
+            new EntitlementConfiguration(mContext, SUB_ID).update(ENTITLEMENT_VERSION, RAW_XML_NEW_TOKEN);
+            throw new ServiceEntitlementException(ERROR_HTTP_STATUS_NOT_SUCCESS, 511, "test-only");
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML_NEW_TOKEN);
+        verify(mMockServiceEntitlement, org.mockito.Mockito.times(1)).queryEntitlementStatus(any(), any());
+    }
+
+    @Test
+    public void checkEntitlementStatus_retryCannotAdoptReplacementGeneration() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenThrow(
+                new ServiceEntitlementException(ERROR_HTTP_STATUS_NOT_SUCCESS, 511, "test-only"));
+        java.util.concurrent.atomic.AtomicBoolean replace = new java.util.concurrent.atomic.AtomicBoolean(true);
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus(() -> {
+            if (mEntitlementConfiguration.getRawXml() == null && replace.getAndSet(false)) {
+                new EntitlementConfiguration(mContext, SUB_ID).update(ENTITLEMENT_VERSION, RAW_XML_NEW_TOKEN);
+            }
+            return true;
+        });
+        assertThat(result).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML_NEW_TOKEN);
+        verify(mMockServiceEntitlement, org.mockito.Mockito.times(1)).queryEntitlementStatus(any(), any());
+    }
+
+    @Test
+    public void checkEntitlementStatus_acceptedResultExpiresOnReset() throws Exception {
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenReturn(RAW_XML);
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+        assertThat(result).isNotNull();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isTrue();
+        new EntitlementConfiguration(mContext, SUB_ID).reset();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isFalse();
+    }
+
+    @Test
+    public void checkEntitlementStatus_invalidVersionValidity_preservesCache() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(any(), any())).thenReturn(
+                RAW_XML.replace("value=\"1728000\"", "value=\"-5\""));
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML);
     }
 
     @Test
