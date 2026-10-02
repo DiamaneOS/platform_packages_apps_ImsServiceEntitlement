@@ -37,7 +37,12 @@ public final class EntitlementUtils {
 
     public static final String LOG_TAG = "IMSSE-EntitlementUtils";
 
-    private static ListenableFuture<EntitlementResult> sCheckEntitlementFuture;
+    private static final Object CHECK_LOCK = new Object();
+    private static final class Check {
+        volatile boolean cancelled;
+        ListenableFuture<EntitlementResult> future; // CHECK_LOCK only.
+    }
+    private static Check sCheck;
 
     private EntitlementUtils() {}
 
@@ -48,32 +53,57 @@ public final class EntitlementUtils {
     @MainThread
     public static void entitlementCheck(
             ImsEntitlementApi activationApi, EntitlementResultCallback callback) {
-        sCheckEntitlementFuture =
-                Futures.submit(() -> getEntitlementStatus(activationApi), getAsyncExecutor());
-        Futures.addCallback(
-                sCheckEntitlementFuture,
-                new FutureCallback<EntitlementResult>() {
-                    @Override
-                    public void onSuccess(EntitlementResult result) {
-                        callback.onEntitlementResult(result);
-                        sCheckEntitlementFuture = null;
-                    }
+        Check check = new Check();
+        Check previous;
+        synchronized (CHECK_LOCK) {
+            previous = sCheck;
+            if (previous != null) previous.cancelled = true;
+            sCheck = check;
+        }
+        cancel(previous);
+        ListenableFuture<EntitlementResult> future = Futures.submit(
+                () -> getEntitlementStatus(activationApi, check), getAsyncExecutor());
+        synchronized (CHECK_LOCK) { check.future = future; }
+        if (check.cancelled) future.cancel(true);
+        Futures.addCallback(future, new FutureCallback<EntitlementResult>() {
+            @Override
+            public void onSuccess(EntitlementResult result) {
+                if (finish(check) && (result == null || activationApi.isResultCurrent(result))) {
+                    callback.onEntitlementResult(result);
+                }
+            }
 
-                    @Override
-                    public void onFailure(Throwable t) {
-                        Log.w(LOG_TAG, "get entitlement status failed.", t);
-                        sCheckEntitlementFuture = null;
-                    }
-                },
-                getDirectExecutor());
+            @Override
+            public void onFailure(Throwable t) {
+                if (finish(check)) Log.w(LOG_TAG, "get entitlement status failed");
+            }
+        }, getDirectExecutor());
     }
 
-    /** Cancels the running task of entitlement status check if exist. */
-    public static void cancelEntitlementCheck() {
-        if (sCheckEntitlementFuture != null) {
-            Log.i(LOG_TAG, "cancel entitlement status check.");
-            sCheckEntitlementFuture.cancel(true);
+    private static boolean finish(Check check) {
+        synchronized (CHECK_LOCK) {
+            if (sCheck != check || check.cancelled) return false;
+            sCheck = null;
+            return true;
         }
+    }
+
+    private static void cancel(Check check) {
+        if (check == null) return;
+        ListenableFuture<EntitlementResult> future;
+        synchronized (CHECK_LOCK) { future = check.future; }
+        if (future != null) future.cancel(true);
+    }
+
+    /** Cancels the running task without letting its late callback clear a successor. */
+    public static void cancelEntitlementCheck() {
+        Check check;
+        synchronized (CHECK_LOCK) {
+            check = sCheck;
+            if (check != null) check.cancelled = true;
+            sCheck = null;
+        }
+        cancel(check);
     }
 
     /**
@@ -82,11 +112,11 @@ public final class EntitlementUtils {
      */
     @WorkerThread
     @Nullable
-    private static EntitlementResult getEntitlementStatus(ImsEntitlementApi activationApi) {
+    private static EntitlementResult getEntitlementStatus(ImsEntitlementApi activationApi, Check check) {
         try {
-            return activationApi.checkEntitlementStatus();
+            return activationApi.checkEntitlementStatus(() -> !check.cancelled);
         } catch (RuntimeException e) {
-            Log.e("WfcActivationActivity", "getEntitlementStatus failed.", e);
+            Log.e("WfcActivationActivity", "getEntitlementStatus failed");
             return null;
         }
     }

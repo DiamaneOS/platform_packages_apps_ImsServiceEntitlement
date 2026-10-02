@@ -17,6 +17,7 @@
 package com.android.imsserviceentitlement;
 
 import static org.mockito.Mockito.never;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -54,11 +55,12 @@ public class EntitlementUtilsTest {
     @Before
     public void setUp() throws Exception {
         useDirectExecutor(true);
+        when(mMockImsEntitlementApi.isResultCurrent(any())).thenReturn(true);
     }
 
     @Test
     public void entitlementCheck_checkEntitlementStatusPass_onEntitlementResult() {
-        when(mMockImsEntitlementApi.checkEntitlementStatus()).thenReturn(mEntitlementResult);
+        when(mMockImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(mEntitlementResult);
 
         EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
 
@@ -67,7 +69,7 @@ public class EntitlementUtilsTest {
 
     @Test
     public void entitlementCheck_checkEntitlementStatusWithRuntimeException_onFailure() {
-        when(mMockImsEntitlementApi.checkEntitlementStatus()).thenThrow(new RuntimeException());
+        when(mMockImsEntitlementApi.checkEntitlementStatus(any())).thenThrow(new RuntimeException());
 
         EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
 
@@ -82,7 +84,7 @@ public class EntitlementUtilsTest {
                 new ImsEntitlementApi(
                         mContext, 1, true, mServiceEntitlement, mEntitlementConfiguration) {
                     @Override
-                    public EntitlementResult checkEntitlementStatus() {
+                    public EntitlementResult checkEntitlementStatus(java.util.function.BooleanSupplier current) {
                         try {
                             entitlementCheckLatch.await();
                         } catch (InterruptedException e) {
