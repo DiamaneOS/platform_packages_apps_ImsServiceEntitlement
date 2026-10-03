@@ -21,6 +21,11 @@ import org.xml.sax.helpers.DefaultHandler;
 
 /** Bounded, non-resolving XML parsing shared by production and host checks. */
 public final class CarrierXml {
+    // Downstream parser-containment budgets, not TS.43 carrier requirements.
+    // Bound nesting and DOM allocation independently of the transport byte cap.
+    private static final int MAX_XML_DEPTH = 64;
+    private static final int MAX_XML_ELEMENTS = 4096;
+
     private CarrierXml() {}
 
     public static Document parse(String body)
@@ -49,7 +54,7 @@ public final class CarrierXml {
             private int nodes;
             @Override public void startElement(String uri, String local, String name, Attributes a)
                     throws SAXException {
-                if (++depth > 64 || ++nodes > 4096) throw new SAXException("Carrier XML too complex");
+                if (++depth > MAX_XML_DEPTH || ++nodes > MAX_XML_ELEMENTS) throw new SAXException("Carrier XML too complex");
             }
             @Override public void endElement(String uri, String local, String name) { --depth; }
         });

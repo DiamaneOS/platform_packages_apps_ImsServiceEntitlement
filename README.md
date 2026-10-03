@@ -37,3 +37,11 @@ Run `sh tests/run-host-tests.sh` with a JDK (or `JAVA_HOME`) for memory-only HTT
 stream-limit and XML tests. The existing `ImsServiceEntitlementUnitTests` exercise
 Android service/activation flows with mocks after a platform test build. No host
 test proves carrier activation, Wi-Fi calling or emergency-address registration.
+
+Parser nesting (64levels) and element count (4096) are named downstream
+containment budgets, independent of the transport byte cap; they are not TS.43
+carrier requirements. A thirty-second minimum Retry-After delay prevents tight
+request loops while preserving longer carrier-directed delays. Existing host
+checks cover parser bounds and transport behavior. The application opts out of
+DiamaneOS's unused implicit motion-sensor permission; carrier HTTPS and phone
+provisioning permissions remain explicit.
