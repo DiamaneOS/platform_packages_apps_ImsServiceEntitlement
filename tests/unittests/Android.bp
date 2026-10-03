@@ -22,6 +22,11 @@ android_test {
     name: "ImsServiceEntitlementUnitTests",
     srcs: ["src/**/*.java"],
     manifest: "AndroidManifest.xml",
+    // Keep the library's Java/resource namespace, but never replace the live carrier app.
+    aaptflags: [
+        "--rename-manifest-package", "de.diamaneos.entitlementtests",
+        "--rename-instrumentation-target-package", "de.diamaneos.entitlementtests",
+    ],
     resource_dirs: [],
     static_libs: [
         "ImsServiceEntitlementLib",
