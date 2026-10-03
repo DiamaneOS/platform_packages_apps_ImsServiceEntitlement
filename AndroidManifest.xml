@@ -30,6 +30,10 @@
       android:networkSecurityConfig="@xml/network_security_config"
       tools:replace="android:allowBackup">
 
+        <!-- Carrier HTTPS activation and polling do not use physical sensors. -->
+        <meta-data android:name="de.diamaneos.permission.NO_IMPLICIT_OTHER_SENSORS"
+            android:value="true" />
+
         <activity
             android:name=".WfcActivationActivity"
             android:permission="android.permission.MODIFY_PHONE_STATE"
