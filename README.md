@@ -41,3 +41,5 @@ require that transport remain an explicit compatibility limit.
   not use. Carrier HTTPS and phone provisioning permissions stay explicit.
 - Include `diamaneos/board.mk` for its dedicated SELinux domain. It cannot speak
   directly to the modem.
+
+## Polling and retries

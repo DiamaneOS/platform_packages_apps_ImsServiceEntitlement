@@ -61,6 +61,9 @@ import java.time.Duration;
 public class ImsEntitlementPollingService extends JobService {
     private static final String TAG = "IMSSE-ImsEntitlementPollingService";
     private static final long MAX_REFRESH_SECONDS = 24 * 60 * 60;
+    // Downstream retry throttle: an untrusted Retry-After of zero must not create
+    // a tight request loop. Longer carrier-requested delays remain unchanged.
+    private static final long MIN_RETRY_AFTER_SECONDS = 30;
 
     public static final ComponentName COMPONENT_NAME =
             ComponentName.unflattenFromString(
@@ -361,7 +364,7 @@ public class ImsEntitlementPollingService extends JobService {
             ImsEntitlementPollingService.enqueueJobWithDelay(
                     ImsEntitlementPollingService.this,
                     mSubid,
-                    Math.max(30, result.getRetryAfterSeconds()));
+                    Math.max(MIN_RETRY_AFTER_SECONDS, result.getRetryAfterSeconds()));
             return true;
         }
 
