@@ -63,11 +63,19 @@ public final class PortalBridgeTest {
                 + "DiamaneOSEntitlementPortal.postMessage('changed')</script>");
         assertFalse(callback.await(1, TimeUnit.SECONDS));
     }
-    @Test public void sameOriginEmbeddedFrameCannotInvokeNativeCallback() throws Exception {
+    @Test public void directEmbeddedFrameMessageIsRejected() throws Exception {
         load("https://portal.example/activation",
                 "<iframe srcdoc=\"<script>if(window.DiamaneOSEntitlementPortal)"
                 + "DiamaneOSEntitlementPortal.postMessage('changed')</script>\"></iframe>");
         assertFalse(callback.await(1, TimeUnit.SECONDS));
+    }
+    @Test public void sameOriginChildCanInvokeItsTrustedParentShim() throws Exception {
+        // Same-origin documents share a browser principal and can access the
+        // parent DOM/objects. isMainFrame filters direct messages, not this case.
+        load("https://portal.example/activation",
+                "<iframe srcdoc=\"<script>parent.CarrierFlow.changed()</script>\"></iframe>");
+        assertTrue(callback.await(3, TimeUnit.SECONDS));
+        assertEquals(1, callbacks.get());
     }
     @Test public void closedBridgeCannotAcceptLaterNavigation() throws Exception {
         load("https://portal.example/activation", "<p>Local page</p>");
