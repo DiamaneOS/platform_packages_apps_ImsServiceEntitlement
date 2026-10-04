@@ -29,6 +29,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -45,6 +46,7 @@ import androidx.test.core.app.ApplicationProvider;
 import androidx.test.runner.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
 
+import com.android.imsserviceentitlement.entitlement.EntitlementConfiguration;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
 import com.android.imsserviceentitlement.job.JobManager;
 import com.android.imsserviceentitlement.ts43.Ts43Constants.EntitlementStatus;
@@ -365,16 +367,75 @@ public class ImsEntitlementPollingServiceTest {
     }
 
     @Test
-    public void failedFirstProvisioningDoesNotContinueAndSchedulesRecovery() throws Exception {
+    public void failedProvisioningAppliesRemainingSettersAndSchedulesRepair() throws Exception {
         setImsProvisioningBool(true);
         when(mImsEntitlementApi.checkPollingEntitlementStatus(any())).thenReturn(
                 getImsEntitlementResult(sEnableVoWiFi, sEnableVoLte, sEnableSmsoverip));
         when(mImsUtils.setVowifiProvisioned(true)).thenReturn(false);
         mService.onStartJob(mJobParameters);
         awaitTask();
-        verify(mImsUtils, never()).setVolteProvisioned(anyBoolean());
-        verify(mImsUtils, never()).setSmsoipProvisioned(anyBoolean());
+        verify(mImsUtils).setVolteProvisioned(true);
+        verify(mImsUtils).setSmsoipProvisioned(true);
+        verify(mImsEntitlementApi, never()).storedPollingEntitlementStatus(any(), any());
+        assertThat(mService.mOngoingTask.getVowifiResult())
+                .isEqualTo(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED);
         assertThat(mService.retry).isTrue();
+    }
+
+    @Test
+    public void throwingSetterDoesNotStopRemainingSetters() throws Exception {
+        setImsProvisioningBool(true);
+        when(mImsEntitlementApi.checkPollingEntitlementStatus(any())).thenReturn(
+                getImsEntitlementResult(sEnableVoWiFi, sEnableVoLte, sEnableSmsoverip));
+        when(mImsUtils.setVolteProvisioned(true)).thenThrow(new RuntimeException());
+        mService.onStartJob(mJobParameters);
+        awaitTask();
+        verify(mImsUtils).setVowifiProvisioned(true);
+        verify(mImsUtils).setSmsoipProvisioned(true);
+        assertThat(mService.mOngoingTask.getVowifiResult())
+                .isEqualTo(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
+        assertThat(mService.retry).isTrue();
+    }
+
+    @Test
+    public void repairRetryReappliesStoredResultWithoutCarrierCheck() throws Exception {
+        setImsProvisioningBool(true);
+        // No stored refresh period: a completed repair finishes the job without a retry.
+        new EntitlementConfiguration(mContext, SUB_ID).reset();
+        EntitlementResult result =
+                getImsEntitlementResult(sEnableVoWiFi, sEnableVoLte, sEnableSmsoverip);
+        when(mImsEntitlementApi.checkPollingEntitlementStatus(any())).thenReturn(result);
+        when(mImsEntitlementApi.storedPollingEntitlementStatus(any(), any())).thenReturn(result);
+        when(mImsUtils.setVolteProvisioned(true)).thenReturn(false, true);
+        mService.onStartJob(mJobParameters);
+        awaitTask();
+        assertThat(mService.retry).isTrue();
+
+        // The scheduler's retry of the same job.
+        mService.retry = null;
+        mService.onStartJob(mJobParameters);
+        awaitTask();
+        verify(mImsEntitlementApi).checkPollingEntitlementStatus(any());
+        verify(mImsEntitlementApi).storedPollingEntitlementStatus(any(), any());
+        verify(mImsUtils, times(2)).setVolteProvisioned(true);
+        verify(mImsUtils, times(2)).setSmsoipProvisioned(true);
+        assertThat(mService.retry).isFalse();
+    }
+
+    @Test
+    public void repairRetryWithoutStoredResultQueriesCarrier() throws Exception {
+        setImsProvisioningBool(true);
+        when(mImsEntitlementApi.checkPollingEntitlementStatus(any())).thenReturn(
+                getImsEntitlementResult(sEnableVoWiFi, sEnableVoLte, sEnableSmsoverip));
+        when(mImsUtils.setSmsoipProvisioned(true)).thenReturn(false, true);
+        mService.onStartJob(mJobParameters);
+        awaitTask();
+
+        mService.onStartJob(mJobParameters);
+        awaitTask();
+        verify(mImsEntitlementApi).storedPollingEntitlementStatus(any(), any());
+        verify(mImsEntitlementApi, times(2)).checkPollingEntitlementStatus(any());
+        verify(mImsUtils, times(2)).setSmsoipProvisioned(true);
     }
 
     @Test
