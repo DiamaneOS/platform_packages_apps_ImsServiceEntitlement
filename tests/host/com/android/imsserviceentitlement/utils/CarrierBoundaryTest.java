@@ -58,6 +58,10 @@ public final class CarrierBoundaryTest {
                 "https://carrier.example:65536/", "https://carrier.example/ bad"}) {
             check(!HttpsUrl.isAllowed(url));
         }
+        check("https://carrier.example".equals(HttpsUrl.origin("https://CARRIER.example:443/path")));
+        check("https://carrier.example:8443".equals(HttpsUrl.origin("https://carrier.example:8443/")));
+        check(!HttpsUrl.origin("https://other.example").equals(HttpsUrl.origin("https://carrier.example")));
+        check(HttpsUrl.origin("https://user@carrier.example/") == null);
         MemoryHttps[] opened = new MemoryHttps[1];
         URL url = new URL(null, "https://carrier.example/api", new URLStreamHandler() {
             @Override protected URLConnection openConnection(URL requested) {
