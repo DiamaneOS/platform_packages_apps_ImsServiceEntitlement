@@ -68,14 +68,18 @@ public final class EntitlementUtils {
         Futures.addCallback(future, new FutureCallback<EntitlementResult>() {
             @Override
             public void onSuccess(EntitlementResult result) {
-                if (finish(check) && (result == null || activationApi.isResultCurrent(result))) {
-                    callback.onEntitlementResult(result);
+                if (finish(check)) {
+                    callback.onEntitlementResult(result != null && activationApi.isResultCurrent(result)
+                            ? result : null);
                 }
             }
 
             @Override
             public void onFailure(Throwable t) {
-                if (finish(check)) Log.w(LOG_TAG, "get entitlement status failed");
+                if (finish(check)) {
+                    Log.w(LOG_TAG, "get entitlement status failed");
+                    callback.onEntitlementResult(null);
+                }
             }
         }, getDirectExecutor());
     }
