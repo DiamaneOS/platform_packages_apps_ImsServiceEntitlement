@@ -117,7 +117,8 @@ public class ImsEntitlementPollingService extends JobService {
         ClientBehavior behavior = configuration.entitlementValidation();
         if (behavior == ClientBehavior.VALID_DURING_VALIDITY) {
             enqueueJobWithDelay(context, subId,
-                    Math.min(MAX_REFRESH_SECONDS, configuration.getVersValidity()));
+                    Math.max(MIN_RETRY_AFTER_SECONDS,
+                            Math.min(MAX_REFRESH_SECONDS, configuration.getVersValidity())));
         } else if (behavior == ClientBehavior.VALID_WITHOUT_DURATION) {
             enqueueJobWithDelay(context, subId, MAX_REFRESH_SECONDS);
         }
@@ -148,7 +149,8 @@ public class ImsEntitlementPollingService extends JobService {
         // #onStopJob will be called to removed the job.
         mOngoingTask = new EntitlementPollingTask(params, subId);
         mTasks.put(jobId, mOngoingTask);
-        mOngoingTask.execute();
+        // One slow carrier must not serialize the other subscription's job.
+        mOngoingTask.executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
         return true;
     }
 
