@@ -101,6 +101,16 @@ public class EntitlementConfigurationTest {
     }
 
     @Test
+    public void carrierDelaySurvivesNewFacadeAndResetClearsIt() {
+        assertThat(mConfiguration.deferRequests(mConfiguration.generation(), () -> true, 120_000)).isTrue();
+        long remaining = new EntitlementConfiguration(mContext, SUB_ID).retryDelayMillis();
+        assertThat(remaining).isGreaterThan(0);
+        assertThat(remaining).isAtMost(120_000);
+        mConfiguration.reset();
+        assertThat(mConfiguration.retryDelayMillis()).isEqualTo(0);
+    }
+
+    @Test
     public void updateConfigurations_verifyConfigs() {
         mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
 
@@ -140,5 +150,37 @@ public class EntitlementConfigurationTest {
 
         assertThat(mConfiguration.getEntitlementVersion()).isEqualTo(ENTITLEMENT_VERSION);
         assertThat(mConfiguration.getVersion()).isEqualTo("0");
+    }
+
+    @Test
+    public void resetAnotherInstance_invalidatesOldTokenAndPendingCommit() {
+        mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        Object generation = mConfiguration.generation();
+        new EntitlementConfiguration(mContext, SUB_ID).reset();
+        assertThat(mConfiguration.getToken().isPresent()).isFalse();
+        Boolean committed = mConfiguration.commitIfCurrent(generation, () -> true, () -> {
+            mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+            return true;
+        });
+        assertThat(committed).isNull();
+        assertThat(mConfiguration.getRawXml()).isNull();
+    }
+
+    @Test
+    public void cancelledCommit_doesNotWrite() {
+        Boolean committed = mConfiguration.commitIfCurrent(mConfiguration.generation(),
+                () -> false, () -> {
+                    mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+                    return true;
+                });
+        assertThat(committed).isNull();
+        assertThat(mConfiguration.getRawXml()).isNull();
+    }
+
+    @Test
+    public void negativeTokenValidity_isNotUnlimited() {
+        mConfiguration.update(ENTITLEMENT_VERSION,
+                RAW_XML.replace("value=\"3600\"", "value=\"-1\""));
+        assertThat(mConfiguration.getToken().isPresent()).isFalse();
     }
 }

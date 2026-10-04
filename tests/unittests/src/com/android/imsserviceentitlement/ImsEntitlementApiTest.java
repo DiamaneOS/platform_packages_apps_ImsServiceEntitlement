@@ -24,8 +24,10 @@ import static com.android.libraries.entitlement.ServiceEntitlementException.ERRO
 import static com.google.common.truth.Truth.assertThat;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
@@ -70,7 +72,6 @@ public class ImsEntitlementApiTest {
     @Spy private Context mContext = ApplicationProvider.getApplicationContext();
 
     @Mock private ServiceEntitlement mMockServiceEntitlement;
-    @Mock private EntitlementConfiguration mMockEntitlementConfiguration;
     @Mock private CarrierConfigManager mCarrierConfigManager;
 
     private PersistableBundle mCarrierConfig;
@@ -362,7 +363,7 @@ public class ImsEntitlementApiTest {
 
         EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
 
-        assertThat(result.getVowifiStatus().vowifiEntitled()).isFalse();
+        assertThat(result).isNull();
         assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(null);
         assertThat(mEntitlementConfiguration.getToken().isPresent()).isFalse();
         assertThat(mEntitlementConfiguration.getTokenValidity()).isEqualTo(0);
@@ -372,7 +373,8 @@ public class ImsEntitlementApiTest {
     @Test
     public void checkEntitlementStatus_httpResponse511_dataStoreReset() throws Exception {
         setImsProvisioningBool(false);
-        setupImsEntitlementApi(mMockEntitlementConfiguration);
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
         when(mMockServiceEntitlement.queryEntitlementStatus(
                 eq(ImmutableList.of(ServiceEntitlement.APP_VOWIFI)), any()))
                 .thenThrow(
@@ -381,8 +383,85 @@ public class ImsEntitlementApiTest {
 
         EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
 
-        verify(mMockEntitlementConfiguration).reset();
+        assertThat(mEntitlementConfiguration.getRawXml()).isNull();
         assertThat(result).isNull();
+    }
+
+    @Test
+    public void checkEntitlementStatus_simResetDuringResponse_doesNotRepopulateCache() throws Exception {
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenAnswer(invocation -> {
+            new EntitlementConfiguration(mContext, SUB_ID).reset();
+            return RAW_XML_NEW_TOKEN;
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isNull();
+        assertThat(mEntitlementConfiguration.getToken().isPresent()).isFalse();
+    }
+
+    @Test
+    public void checkEntitlementStatus_cancelledDuringResponse_preservesCache() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenAnswer(invocation -> {
+            current.set(false);
+            return RAW_XML_NEW_TOKEN;
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus(current::get)).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML);
+    }
+
+    @Test
+    public void checkEntitlementStatus_oldExpiredTokenResponse_doesNotResetReplacement() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenAnswer(invocation -> {
+            new EntitlementConfiguration(mContext, SUB_ID).update(ENTITLEMENT_VERSION, RAW_XML_NEW_TOKEN);
+            throw new ServiceEntitlementException(ERROR_HTTP_STATUS_NOT_SUCCESS, 511, "test-only");
+        });
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML_NEW_TOKEN);
+        verify(mMockServiceEntitlement, org.mockito.Mockito.times(1)).queryEntitlementStatus(anyList(), any());
+    }
+
+    @Test
+    public void checkEntitlementStatus_retryCannotAdoptReplacementGeneration() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenThrow(
+                new ServiceEntitlementException(ERROR_HTTP_STATUS_NOT_SUCCESS, 511, "test-only"));
+        java.util.concurrent.atomic.AtomicBoolean replace = new java.util.concurrent.atomic.AtomicBoolean(true);
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus(() -> {
+            if (mEntitlementConfiguration.getRawXml() == null && replace.getAndSet(false)) {
+                new EntitlementConfiguration(mContext, SUB_ID).update(ENTITLEMENT_VERSION, RAW_XML_NEW_TOKEN);
+            }
+            return true;
+        });
+        assertThat(result).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML_NEW_TOKEN);
+        verify(mMockServiceEntitlement, org.mockito.Mockito.times(1)).queryEntitlementStatus(anyList(), any());
+    }
+
+    @Test
+    public void checkEntitlementStatus_acceptedResultExpiresOnReset() throws Exception {
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenReturn(RAW_XML);
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+        assertThat(result).isNotNull();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isTrue();
+        new EntitlementConfiguration(mContext, SUB_ID).reset();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isFalse();
+    }
+
+    @Test
+    public void checkEntitlementStatus_invalidVersionValidity_preservesCache() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        when(mMockServiceEntitlement.queryEntitlementStatus(anyList(), any())).thenReturn(
+                RAW_XML.replace("value=\"1728000\"", "value=\"-5\""));
+        assertThat(mImsEntitlementApi.checkEntitlementStatus()).isNull();
+        assertThat(mEntitlementConfiguration.getRawXml()).isEqualTo(RAW_XML);
     }
 
     @Test
@@ -459,6 +538,31 @@ public class ImsEntitlementApiTest {
     }
 
     @Test
+    public void checkEntitlementStatus_httpResponse503WithLongRetryAfter_cappedAtOneDay()
+            throws Exception {
+        setImsProvisioningBool(false);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        when(mMockServiceEntitlement.queryEntitlementStatus(
+                ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
+                authenticationRequest("kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX")))
+                .thenThrow(
+                        new ServiceEntitlementException(
+                                ERROR_HTTP_STATUS_NOT_SUCCESS,
+                                503,
+                                "315360000",
+                                "Invalid connection response"));
+
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+
+        assertThat(result).isNotNull();
+        assertThat(result.getRetryAfterSeconds())
+                .isEqualTo(ImsEntitlementApi.MAX_RETRY_AFTER_SECONDS);
+        assertThat(mEntitlementConfiguration.retryDelayMillis())
+                .isAtMost(ImsEntitlementApi.MAX_RETRY_AFTER_SECONDS * 1000);
+    }
+
+    @Test
     public void checkEntitlementStatus_invalidSubId_resultNull() {
         ImsEntitlementApi imsEntitlementApi =
                 new ImsEntitlementApi(mContext, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
@@ -466,6 +570,27 @@ public class ImsEntitlementApiTest {
         EntitlementResult result = imsEntitlementApi.checkEntitlementStatus();
 
         assertThat(result).isNull();
+    }
+
+    @Test
+    public void pollingReconcilesStopInstructionWithoutCarrierAuthentication() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO,
+                EntitlementConfiguration.RAW_XML_VERS_MINUS_ONE);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        EntitlementResult result = mImsEntitlementApi.checkPollingEntitlementStatus(() -> true);
+        assertThat(result).isNotNull();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isTrue();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+        verifyDefaultEntitlementResult(result, false);
+    }
+
+    @Test
+    public void canceledPollingCannotConsumeCachedStopInstruction() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO,
+                EntitlementConfiguration.RAW_XML_VERS_MINUS_TWO);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        assertThat(mImsEntitlementApi.checkPollingEntitlementStatus(() -> false)).isNull();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
     }
 
     private ServiceEntitlementRequest authenticationRequest(String token) {
@@ -503,7 +628,7 @@ public class ImsEntitlementApiTest {
         if (mCarrierConfig == null) {
             mCarrierConfig = new PersistableBundle();
             when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfig);
-            when(mContext.getSystemService(CarrierConfigManager.class))
+            when(mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE))
                     .thenReturn(mCarrierConfigManager);
         }
     }
