@@ -108,7 +108,7 @@ public class WfcQnsWebPortalFragment extends Fragment {
 
     mBridge = PortalBridge.install(webView, url, "WiFiCallingWebViewController",
         Set.of("cancelButtonClicked", "cancelButtonPressed", "phoneServicesAccountStatusChanged",
-            "CloseWebView"), method -> {
+            "CloseWebView"), Set.of("cancelButtonClicked", "CloseWebView"), method -> {
           if (method.equals("cancelButtonClicked") || method.equals("CloseWebView")) {
             Activity activity = getActivity();
             if (activity != null) { activity.setResult(Activity.RESULT_CANCELED); activity.finish(); }

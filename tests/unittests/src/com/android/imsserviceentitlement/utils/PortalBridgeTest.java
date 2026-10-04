@@ -7,6 +7,9 @@ import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import androidx.test.ext.junit.runners.AndroidJUnit4;
 import androidx.test.platform.app.InstrumentationRegistry;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
@@ -22,6 +25,7 @@ public final class PortalBridgeTest {
     private PortalBridge bridge;
     private final AtomicInteger callbacks = new AtomicInteger();
     private final CountDownLatch callback = new CountDownLatch(1);
+    private final List<String> received = Collections.synchronizedList(new ArrayList<>());
     private void ui(Runnable action) {
         InstrumentationRegistry.getInstrumentation().runOnMainSync(action);
     }
@@ -34,8 +38,8 @@ public final class PortalBridgeTest {
                 view.getSettings().setAllowFileAccess(false);
                 view.getSettings().setAllowContentAccess(false);
                 bridge = PortalBridge.install(view, "https://portal.example/activation",
-                        "CarrierFlow", Set.of("changed"), method -> {
-                            callbacks.incrementAndGet(); callback.countDown();
+                        "CarrierFlow", Set.of("changed", "progress"), Set.of("changed"), method -> {
+                            received.add(method); callbacks.incrementAndGet(); callback.countDown();
                         });
                 assertNotNull("Installed WebView must support the secure bridge", bridge);
             }
@@ -76,6 +80,14 @@ public final class PortalBridgeTest {
                 "<iframe srcdoc=\"<script>parent.CarrierFlow.changed()</script>\"></iframe>");
         assertTrue(callback.await(3, TimeUnit.SECONDS));
         assertEquals(1, callbacks.get());
+    }
+    @Test public void terminalCallbackIsDeliveredOnce() throws Exception {
+        load("https://portal.example/activation", "<script>CarrierFlow.progress();"
+                + "CarrierFlow.progress();CarrierFlow.changed();CarrierFlow.changed();"
+                + "CarrierFlow.progress()</script>");
+        assertTrue(callback.await(3, TimeUnit.SECONDS));
+        Thread.sleep(1000); // Let any later messages arrive.
+        assertEquals(List.of("progress", "progress", "changed"), List.copyOf(received));
     }
     @Test public void closedBridgeCannotAcceptLaterNavigation() throws Exception {
         load("https://portal.example/activation", "<p>Local page</p>");

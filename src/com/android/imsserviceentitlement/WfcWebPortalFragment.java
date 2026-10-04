@@ -116,8 +116,10 @@ public class WfcWebPortalFragment extends Fragment {
                         }
                     }
                 });
-        mBridge = PortalBridge.install(mWebView, url, JS_CONTROLLER_NAME,
-                Set.of("entitlementChanged", "dismissFlow"), method -> {
+        // Both carrier methods end the flow; the bridge delivers only the first one.
+        Set<String> methods = Set.of("entitlementChanged", "dismissFlow");
+        mBridge = PortalBridge.install(mWebView, url, JS_CONTROLLER_NAME, methods, methods,
+                method -> {
                     if (getActivity() == null) return;
                     WfcActivationUi ui = (WfcActivationUi) getActivity();
                     if (method.equals("entitlementChanged")) {
