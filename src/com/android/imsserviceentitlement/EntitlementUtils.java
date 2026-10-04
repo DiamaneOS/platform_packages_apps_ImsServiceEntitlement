@@ -16,7 +16,6 @@
 
 package com.android.imsserviceentitlement;
 
-import static com.android.imsserviceentitlement.utils.Executors.getAsyncExecutor;
 import static com.android.imsserviceentitlement.utils.Executors.getDirectExecutor;
 
 import android.util.Log;
@@ -27,6 +26,8 @@ import androidx.annotation.WorkerThread;
 
 import com.android.imsserviceentitlement.WfcActivationController.EntitlementResultCallback;
 import com.android.imsserviceentitlement.entitlement.EntitlementResult;
+import com.android.imsserviceentitlement.utils.RequestScope;
+import com.android.imsserviceentitlement.utils.Executors;
 
 import com.google.common.util.concurrent.FutureCallback;
 import com.google.common.util.concurrent.Futures;
@@ -40,6 +41,7 @@ public final class EntitlementUtils {
     private static final Object CHECK_LOCK = new Object();
     private static final class Check {
         volatile boolean cancelled;
+        final RequestScope scope = new RequestScope();
         ListenableFuture<EntitlementResult> future; // CHECK_LOCK only.
     }
     private static Check sCheck;
@@ -61,21 +63,37 @@ public final class EntitlementUtils {
             sCheck = check;
         }
         cancel(previous);
-        ListenableFuture<EntitlementResult> future = Futures.submit(
-                () -> getEntitlementStatus(activationApi, check), getAsyncExecutor());
+        check.scope.arm(() -> {
+            ListenableFuture<EntitlementResult> running;
+            synchronized (CHECK_LOCK) { running = check.future; }
+            if (running != null) running.cancel(true);
+            Executors.removeCancelledCarrierWork();
+            if (finish(check)) callback.onEntitlementResult(null);
+        });
+        final ListenableFuture<EntitlementResult> future;
+        try {
+            future = Futures.submit(() -> check.scope.run(
+                    () -> getEntitlementStatus(activationApi, check)), Executors.getCarrierExecutor());
+        } catch (java.util.concurrent.RejectedExecutionException saturated) {
+            check.scope.close();
+            if (finish(check)) callback.onEntitlementResult(null);
+            return;
+        }
         synchronized (CHECK_LOCK) { check.future = future; }
-        if (check.cancelled) future.cancel(true);
+        if (check.cancelled || !check.scope.isCurrent()) future.cancel(true);
         Futures.addCallback(future, new FutureCallback<EntitlementResult>() {
             @Override
             public void onSuccess(EntitlementResult result) {
+                boolean current = check.scope.complete();
                 if (finish(check)) {
-                    callback.onEntitlementResult(result != null && activationApi.isResultCurrent(result)
+                    callback.onEntitlementResult(current && result != null && activationApi.isResultCurrent(result)
                             ? result : null);
                 }
             }
 
             @Override
             public void onFailure(Throwable t) {
+                check.scope.close();
                 if (finish(check)) {
                     Log.w(LOG_TAG, "get entitlement status failed");
                     callback.onEntitlementResult(null);
@@ -94,9 +112,11 @@ public final class EntitlementUtils {
 
     private static void cancel(Check check) {
         if (check == null) return;
+        check.scope.abort();
         ListenableFuture<EntitlementResult> future;
         synchronized (CHECK_LOCK) { future = check.future; }
         if (future != null) future.cancel(true);
+        Executors.removeCancelledCarrierWork();
     }
 
     /** Cancels the running task without letting its late callback clear a successor. */
