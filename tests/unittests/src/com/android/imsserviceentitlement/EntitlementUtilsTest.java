@@ -74,6 +74,15 @@ public class EntitlementUtilsTest {
         EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
 
         verify(mEntitlementResultCallback, never()).onEntitlementResult(mEntitlementResult);
+        verify(mEntitlementResultCallback).onEntitlementResult(null);
+    }
+
+    @Test public void entitlementCheck_staleResultCompletesWithoutApplyingApproval() {
+        when(mMockImsEntitlementApi.checkEntitlementStatus(any())).thenReturn(mEntitlementResult);
+        when(mMockImsEntitlementApi.isResultCurrent(any())).thenReturn(false);
+        EntitlementUtils.entitlementCheck(mMockImsEntitlementApi, mEntitlementResultCallback);
+        verify(mEntitlementResultCallback).onEntitlementResult(null);
+        verify(mEntitlementResultCallback, never()).onEntitlementResult(mEntitlementResult);
     }
 
     @Test
