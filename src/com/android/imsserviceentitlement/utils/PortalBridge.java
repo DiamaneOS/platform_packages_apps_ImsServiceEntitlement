@@ -10,7 +10,10 @@ import androidx.webkit.WebViewFeature;
 import java.util.Set;
 import java.util.function.Consumer;
 
-/** Carrier method compatibility over an exact-origin, main-frame message channel. */
+/** Carrier method compatibility over an exact-origin channel with direct main-frame callbacks.
+ * Same-origin child documents can access their parent's shim, as permitted by the browser
+ * origin model. This does not authenticate individual scripts or paths within that origin.
+ */
 public final class PortalBridge implements AutoCloseable {
     private static final String CHANNEL = "DiamaneOSEntitlementPortal";
     private final WebView view;

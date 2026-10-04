@@ -704,6 +704,32 @@ public class WfcActivationControllerTest {
                         mUiHandler);
     }
 
+    @Test public void finishedControllerCannotConsumeQueuedApproval() {
+        EntitlementResult result = EntitlementResult.builder(false).setVowifiStatus(
+                Ts43VowifiStatus.builder().setEntitlementStatus(EntitlementStatus.ENABLED)
+                        .setTcStatus(TcStatus.AVAILABLE).setAddrStatus(AddrStatus.AVAILABLE)
+                        .setProvStatus(ProvStatus.PROVISIONED).build()).build();
+        when(mMockActivationApi.checkEntitlementStatus(any())).thenReturn(result);
+        buildActivity(ActivityConstants.LAUNCH_APP_ACTIVATE);
+        mWfcActivationController.evaluateEntitlementStatus();
+        mWfcActivationController.finish();
+        mTestLooperManager.execute(mTestLooperManager.next());
+        verify(mMockActivationUi, never()).setResultAndFinish(Activity.RESULT_OK);
+    }
+
+    @Test public void cacheReplacementBeforeUiDeliveryCannotApplyApproval() {
+        EntitlementResult result = EntitlementResult.builder(false).setVowifiStatus(
+                Ts43VowifiStatus.builder().setEntitlementStatus(EntitlementStatus.ENABLED)
+                        .setTcStatus(TcStatus.AVAILABLE).setAddrStatus(AddrStatus.AVAILABLE)
+                        .setProvStatus(ProvStatus.PROVISIONED).build()).build();
+        when(mMockActivationApi.checkEntitlementStatus(any())).thenReturn(result);
+        buildActivity(ActivityConstants.LAUNCH_APP_ACTIVATE);
+        mWfcActivationController.evaluateEntitlementStatus();
+        when(mMockActivationApi.isResultCurrent(result)).thenReturn(false);
+        mTestLooperManager.execute(mTestLooperManager.next());
+        verify(mMockActivationUi, never()).setResultAndFinish(Activity.RESULT_OK);
+    }
+
     private void setNetworkConnected(boolean isConnected) {
         when(mMockNetworkInfo.isConnected()).thenReturn(isConnected);
         when(mContext.getSystemService(Context.CONNECTIVITY_SERVICE)).thenReturn(

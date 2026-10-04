@@ -349,9 +349,13 @@ public class ImsEntitlementPollingService extends JobService {
         private boolean isCurrentResult(EntitlementResult result) {
             // No cache monitor is held across framework Binder setters. Check again
             // after subscription lookups and before each provisioning operation.
-            return !isCancelled() && JobManager.isValidJob(
-                    ImsEntitlementPollingService.this, mParams) && !isCancelled()
-                    && mImsEntitlementApi.isResultCurrent(result);
+            if (isCancelled() || !JobManager.isValidJob(
+                    ImsEntitlementPollingService.this, mParams) || isCancelled()) return false;
+            if (mImsEntitlementApi.isResultCurrent(result)) return true;
+            // Setters are separate Binder operations. Reconcile if a generation
+            // change interrupts provisioning, instead of leaving partial state.
+            mReschedule = true;
+            return false;
         }
 
         /**

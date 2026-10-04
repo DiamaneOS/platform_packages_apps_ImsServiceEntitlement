@@ -75,6 +75,8 @@ public class WfcActivationController {
 
     // States
     private int mEvaluateTimes = 0;
+    private Object mDeliveryOwner; // Main-thread delivery lifetime.
+    private boolean mFinished;
     private int mAppResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__UNKNOWN_RESULT;
 
     @MainThread
@@ -127,6 +129,9 @@ public class WfcActivationController {
     /** Evaluates entitlement status for activation or update. */
     @MainThread
     public void evaluateEntitlementStatus() {
+        if (mFinished) return;
+        Object owner = new Object();
+        mDeliveryOwner = owner;
         if (!mTelephonyUtils.isNetworkConnected()) {
             handleInitialEntitlementStatus(null);
             return;
@@ -134,7 +139,12 @@ public class WfcActivationController {
         EntitlementUtils.entitlementCheck(
                 mImsEntitlementApi,
                 result -> mMainThreadHandler.post(
-                        () -> handleInitialEntitlementStatus(result)));
+                        () -> {
+                            if (mFinished || mDeliveryOwner != owner) return;
+                            mDeliveryOwner = null;
+                            handleInitialEntitlementStatus(result != null
+                                    && mImsEntitlementApi.isResultCurrent(result) ? result : null);
+                        }));
     }
 
     /**
@@ -155,10 +165,18 @@ public class WfcActivationController {
     /** Re-evaluate entitlement status after updating. */
     @MainThread
     public void reevaluateEntitlementStatus() {
+        if (mFinished) return;
+        Object owner = new Object();
+        mDeliveryOwner = owner;
         EntitlementUtils.entitlementCheck(
                 mImsEntitlementApi,
                 result -> mMainThreadHandler.post(
-                        () -> handleReevaluationEntitlementStatus(result)));
+                        () -> {
+                            if (mFinished || mDeliveryOwner != owner) return;
+                            mDeliveryOwner = null;
+                            handleReevaluationEntitlementStatus(result != null
+                                    && mImsEntitlementApi.isResultCurrent(result) ? result : null);
+                        }));
     }
 
     /** The interface for handling the entitlement check result. */
@@ -169,6 +187,8 @@ public class WfcActivationController {
     /** Indicates the controller to finish on-going tasks and get ready to be destroyed. */
     @MainThread
     public void finish() {
+        mFinished = true;
+        mDeliveryOwner = null;
         EntitlementUtils.cancelEntitlementCheck();
 
         if (isSkipWfcActivation() && isActivationFlow()) {
