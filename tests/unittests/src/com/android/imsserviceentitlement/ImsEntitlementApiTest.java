@@ -27,6 +27,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
@@ -546,6 +547,27 @@ public class ImsEntitlementApiTest {
         assertThat(result).isNull();
     }
 
+    @Test
+    public void pollingReconcilesStopInstructionWithoutCarrierAuthentication() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO,
+                EntitlementConfiguration.RAW_XML_VERS_MINUS_ONE);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        EntitlementResult result = mImsEntitlementApi.checkPollingEntitlementStatus(() -> true);
+        assertThat(result).isNotNull();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isTrue();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+        verifyDefaultEntitlementResult(result, false);
+    }
+
+    @Test
+    public void canceledPollingCannotConsumeCachedStopInstruction() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO,
+                EntitlementConfiguration.RAW_XML_VERS_MINUS_TWO);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        assertThat(mImsEntitlementApi.checkPollingEntitlementStatus(() -> false)).isNull();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+    }
+
     private ServiceEntitlementRequest authenticationRequest(String token) {
         ServiceEntitlementRequest.Builder requestBuilder = ServiceEntitlementRequest.builder();
         if (token != null) {
@@ -581,7 +603,7 @@ public class ImsEntitlementApiTest {
         if (mCarrierConfig == null) {
             mCarrierConfig = new PersistableBundle();
             when(mCarrierConfigManager.getConfigForSubId(SUB_ID)).thenReturn(mCarrierConfig);
-            when(mContext.getSystemService(CarrierConfigManager.class))
+            when(mContext.getSystemService(Context.CARRIER_CONFIG_SERVICE))
                     .thenReturn(mCarrierConfigManager);
         }
     }

@@ -7,13 +7,7 @@ is not the IMS service.
 
 ## When it runs
 
-The client keeps SIM authentication and normal TLS certificate/hostname checks.
-It sends no notification token and does not pretend to support push. Server
-validity controls polling: shorter validity periods are honored, while longer or
-unlimited validity is refreshed daily. JobScheduler handles retry backoff after
-failure; server-directed stop states remain stopped.
-This cannot reproduce immediate carrier push notifications, and carriers that
-require that transport remain an explicit compatibility limit.
+Use is carrier-specific.
 
 - The supported devices' factory configuration and the source carrier assets
   configure no IMS entitlement URL, activation activity, FCM sender or
@@ -43,3 +37,44 @@ require that transport remain an explicit compatibility limit.
   directly to the modem.
 
 ## Polling and retries
+
+- Server validity controls polling: a thirty-second floor and a daily ceiling.
+  Unlimited validity refreshes daily.
+- Ordinary failure uses JobScheduler's own exponential retry backoff, with no
+  permanent attempt cutoff. Server-directed stop states stay stopped.
+- A thirty-second minimum Retry-After delay prevents tight request loops but
+  keeps longer carrier-directed delays.
+- Carrier Retry-After sets a subscription-local not-before time. Early
+  framework retries make no HTTPS or AKA requests.
+- Immediate carrier push notifications cannot be reproduced. Carriers that
+  require that transport are an explicit compatibility limit.
+- Accepted carrier stop states are reconciled locally after a setter failure,
+  with the existing entitlement-version upgrade exception.
+- A run/generation fence and a nonblocking per-subscription provisioning gate
+  stop a late poll from applying a successor's state.
+- Provisioning setters stay separate framework operations. A failed/expired
+  sequence is retried, not described as an atomic update.
+
+## Downstream budgets
+
+Containment choices, not TS.43 carrier requirements or protocol timeouts:
+
+- Parser nesting 64 levels, element count 4096, independent of the transport
+  byte cap.
+- One 120-second lifetime per check, covering admission, HTTPS, redirects,
+  AKA/token renewal and local provisioning: four ordinary 30-second HTTP stages.
+- Three physical workers and three queued checks cover two active
+  subscriptions (dual SIM) and the activation UI.
+- Cancellation does not create replacement capacity for a blocked
+  framework/transport operation.
+- Transport cleanup and serialized job scheduling have separate bounded
+  workers. Neither runs on the deadline or main thread.
+
+## Tests
+
+- `sh tests/run-host-tests.sh` with a JDK (or `JAVA_HOME`): memory-only HTTPS,
+  stream-limit, parser-bound and XML tests.
+- The existing `ImsServiceEntitlementUnitTests` exercise Android
+  service/activation flows with mocks after a platform test build.
+- Host tests do not cover carrier activation, Wi-Fi calling or
+  emergency-address registration.
