@@ -99,6 +99,24 @@ public final class RetryDeadlineTest {
         assertThat(store.retryDelayMillis()).isEqualTo(60_000);
     }
 
+    @Test public void carrierDelayIsCappedAtOneDay() {
+        assertThat(store.deferRequests(store.generation(), () -> true, 10 * 86_400_000L)).isTrue();
+        assertThat(store.retryDelayMillis())
+                .isEqualTo(EntitlementConfigurationsDataStore.MAX_RETRY_DELAY_MILLIS);
+    }
+
+    @Test public void storedOverlongDeadlineIsCappedAfterRestart() {
+        long tenDays = 10 * 86_400_000L;
+        assertThat(preferences.edit().putString("RETRY_OWNER", "legacy")
+                .putLong("RETRY_NOT_BEFORE_MILLIS", wall.get() + tenDays)
+                .putLong("RETRY_ELAPSED_DUE", elapsed.get() + tenDays)
+                .putInt("RETRY_BOOT", 5).commit()).isTrue();
+        var replacement = new EntitlementConfigurationsDataStore(
+                preferences, 6, wall::get, elapsed::get);
+        assertThat(replacement.retryDelayMillis())
+                .isEqualTo(EntitlementConfigurationsDataStore.MAX_RETRY_DELAY_MILLIS);
+    }
+
     @Test public void canceledOwnerCannotPersistDelay() {
         assertThat(store.deferRequests(store.generation(), () -> false, 60_000)).isFalse();
         assertThat(store.retryDelayMillis()).isEqualTo(0);
