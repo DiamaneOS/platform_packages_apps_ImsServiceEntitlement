@@ -63,6 +63,7 @@ public class JobManager {
     private Schedule mPending;
     private boolean mDrainPosted;
     private long mProvisioningOwner;
+    private long mRepairGeneration = -1; // Process memory only; schedule generations are >= 0.
     private static final long SCHEDULER_RETRY_MILLIS = JobInfo.DEFAULT_INITIAL_BACKOFF_MILLIS;
     private static final class Schedule {
         final long generation;
@@ -97,6 +98,22 @@ public class JobManager {
     }
     public synchronized void leaveProvisioning(long ticket) {
         if (mProvisioningOwner == ticket) mProvisioningOwner = 0;
+    }
+    /** A setter of this run failed: the scheduler's retry of the same job is a repair run. */
+    public synchronized void requestRepair(long ticket) {
+        if (isCurrentRun(ticket)) mRepairGeneration = mRunGeneration;
+    }
+    /** Whether this run retries a scheduled job whose provisioning setters failed. */
+    public synchronized boolean isRepairRun(long ticket) {
+        return isCurrentRun(ticket) && mRepairGeneration == mRunGeneration;
+    }
+    /** Whether the scheduled job is still a repair that no newer schedule has replaced. */
+    public synchronized boolean isRepairPending() {
+        return mRepairGeneration == mGeneration;
+    }
+    /** A run that finishes its job without a retry leaves no repair pending. */
+    public synchronized void endRepair(long ticket) {
+        if (isCurrentRun(ticket)) mRepairGeneration = -1;
     }
     public void queryFromCompletedRun(long ticket, int failures, Duration delay) {
         synchronized (this) {

@@ -49,6 +49,7 @@ import com.google.common.collect.ImmutableList;
 import com.google.common.net.HttpHeaders;
 
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.format.DateTimeParseException;
 import java.util.function.BooleanSupplier;
@@ -171,6 +172,46 @@ public class ImsEntitlementApi {
                 && behavior != ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS_UNTIL_SETTING_ON
                 || versionUpgrade) {
             return checkEntitlementStatus(current, generation, AUTHENTICATION_RETRIES);
+        }
+        EntitlementResult result = toEntitlementResult(document, behavior);
+        return scope.accept(() -> mLastEntitlementConfiguration.commitIfCurrent(
+                generation, current, () -> {
+                    mAcceptedResult = new AcceptedResult(generation, result);
+                    return result;
+                }));
+    }
+
+    /**
+     * Rebuilds the polling result from the stored carrier configuration, without an HTTP/AKA
+     * request, while it is within its VERS validity and younger than {@code maxAge}. Returns
+     * {@code null} when the carrier must be queried instead.
+     */
+    @Nullable
+    public EntitlementResult storedPollingEntitlementStatus(BooleanSupplier ownerCurrent,
+            Duration maxAge) {
+        RequestScope scope = RequestScope.current();
+        if (scope == null) {
+            try (RequestScope owned = new RequestScope()) {
+                return owned.run(() -> storedPollingEntitlementStatus(ownerCurrent, maxAge));
+            }
+        }
+        BooleanSupplier current = () -> scope.isCurrent() && ownerCurrent.getAsBoolean()
+                && scope.isCurrent() && !Thread.currentThread().isInterrupted();
+        Object generation = mLastEntitlementConfiguration.generation();
+        // Read the XML and its receive time together under the cache monitor.
+        String rawXml = mLastEntitlementConfiguration.commitIfCurrent(generation, current,
+                () -> mLastEntitlementConfiguration.isVersInValidityPeriod(maxAge.toMillis())
+                        ? mLastEntitlementConfiguration.getRawXml() : null);
+        if (rawXml == null) return null;
+        XmlDoc document = new XmlDoc(rawXml);
+        ClientBehavior behavior = EntitlementConfiguration.entitlementValidation(document);
+        int configuredVersion = TelephonyUtils.getEntitlementVersion(mContext, mSubId);
+        boolean versionUpgrade = configuredVersion >= ENTITLEMENT_VERSION_EIGHT
+                && configuredVersion != mLastEntitlementConfiguration.getEntitlementVersion();
+        if (behavior != ClientBehavior.VALID_DURING_VALIDITY
+                && behavior != ClientBehavior.VALID_WITHOUT_DURATION
+                || versionUpgrade) {
+            return null;
         }
         EntitlementResult result = toEntitlementResult(document, behavior);
         return scope.accept(() -> mLastEntitlementConfiguration.commitIfCurrent(
