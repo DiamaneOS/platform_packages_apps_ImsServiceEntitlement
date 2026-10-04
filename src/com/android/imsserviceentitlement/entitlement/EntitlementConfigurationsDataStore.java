@@ -39,6 +39,8 @@ class EntitlementConfigurationsDataStore {
     private static final String RETRY_OWNER = "RETRY_OWNER";
     private static final String RETRY_ELAPSED_DUE = "RETRY_ELAPSED_DUE";
     private static final String RETRY_BOOT = "RETRY_BOOT";
+    // Carrier Retry-After cap. Also bounds deadlines stored before the cap or skewed by clock changes.
+    static final long MAX_RETRY_DELAY_MILLIS = 24 * 60 * 60 * 1000L;
 
     private final SharedPreferences mPreferences;
     // Only retry-metadata writers use this gate; no cache/scope monitor spans disk IO.
@@ -130,6 +132,7 @@ class EntitlementConfigurationsDataStore {
 
     boolean deferRequests(Object generation, BooleanSupplier current, long delayMillis) {
         if (delayMillis < 0) throw new IllegalArgumentException("Negative carrier delay");
+        delayMillis = Math.min(delayMillis, MAX_RETRY_DELAY_MILLIS);
         synchronized (mRetryPersistenceLock) {
             String owner = commitIfCurrent(generation, current,
                     () -> mPreferences.getString(CACHE_STAMP, "legacy"));
@@ -202,7 +205,7 @@ class EntitlementConfigurationsDataStore {
         boolean sameBoot = mBootCount >= 0 && mBootCount == deadline.boot;
         long due = sameBoot ? deadline.elapsedDue : deadline.wallDue;
         long now = Math.max(0, (sameBoot ? mElapsedClock : mWallClock).getAsLong());
-        return due > now ? due - now : 0;
+        return due > now ? Math.min(due - now, MAX_RETRY_DELAY_MILLIS) : 0;
     }
 
     public synchronized long getQueryTimeMillis() {

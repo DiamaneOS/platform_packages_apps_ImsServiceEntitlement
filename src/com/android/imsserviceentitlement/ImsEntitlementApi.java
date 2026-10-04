@@ -77,6 +77,9 @@ public class ImsEntitlementApi {
     }
     // Same minimum as Android's ordinary first failure backoff; zero cannot spin AKA requests.
     private static final long MIN_RETRY_AFTER_SECONDS = 30;
+    // A carrier delay is stored and also blocks the activation UI; cap it at the refresh period.
+    @VisibleForTesting
+    static final long MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
     private volatile AcceptedResult mAcceptedResult;
     private boolean mNeedsImsProvisioning;
 
@@ -268,8 +271,9 @@ public class ImsEntitlementApi {
                         e.getRetryAfter())) {
                     // For handling the case of HTTP_UNAVAILABLE(503), client would perform the
                     // retry for the delay of Retry-After.
-                    long retryAfter = parseDelaySecondsByRetryAfter(e.getRetryAfter());
-                    if (retryAfter < 0 || retryAfter > Long.MAX_VALUE / 1000) return null;
+                    long parsedRetryAfter = parseDelaySecondsByRetryAfter(e.getRetryAfter());
+                    if (parsedRetryAfter < 0) return null;
+                    long retryAfter = Math.min(MAX_RETRY_AFTER_SECONDS, parsedRetryAfter);
                     boolean isDefaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
                     if (!mLastEntitlementConfiguration.deferRequests(generation, current,
                             Math.max(MIN_RETRY_AFTER_SECONDS, retryAfter) * 1000)) return null;

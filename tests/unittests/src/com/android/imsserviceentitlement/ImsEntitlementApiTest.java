@@ -538,6 +538,31 @@ public class ImsEntitlementApiTest {
     }
 
     @Test
+    public void checkEntitlementStatus_httpResponse503WithLongRetryAfter_cappedAtOneDay()
+            throws Exception {
+        setImsProvisioningBool(false);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
+        when(mMockServiceEntitlement.queryEntitlementStatus(
+                ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
+                authenticationRequest("kZYfCEpSsMr88KZVmab5UsZVzl+nWSsX")))
+                .thenThrow(
+                        new ServiceEntitlementException(
+                                ERROR_HTTP_STATUS_NOT_SUCCESS,
+                                503,
+                                "315360000",
+                                "Invalid connection response"));
+
+        EntitlementResult result = mImsEntitlementApi.checkEntitlementStatus();
+
+        assertThat(result).isNotNull();
+        assertThat(result.getRetryAfterSeconds())
+                .isEqualTo(ImsEntitlementApi.MAX_RETRY_AFTER_SECONDS);
+        assertThat(mEntitlementConfiguration.retryDelayMillis())
+                .isAtMost(ImsEntitlementApi.MAX_RETRY_AFTER_SECONDS * 1000);
+    }
+
+    @Test
     public void checkEntitlementStatus_invalidSubId_resultNull() {
         ImsEntitlementApi imsEntitlementApi =
                 new ImsEntitlementApi(mContext, SubscriptionManager.INVALID_SUBSCRIPTION_ID);
