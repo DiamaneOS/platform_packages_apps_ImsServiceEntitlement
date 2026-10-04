@@ -21,7 +21,7 @@ public final class PortalBridge implements AutoCloseable {
     private boolean active = true; // WebView/UI thread only.
 
     private PortalBridge(WebView view, String origin, String controller,
-            Set<String> methods, Consumer<String> receive) {
+            Set<String> methods, Set<String> terminal, Consumer<String> receive) {
         this.view = view;
         Set<String> allowedOrigins = Set.of(origin);
         WebViewCompat.addWebMessageListener(view, CHANNEL, allowedOrigins,
@@ -29,7 +29,10 @@ public final class PortalBridge implements AutoCloseable {
                     if (!active || !isMainFrame || message.getType() != WebMessageCompat.TYPE_STRING
                             || !origin.equals(HttpsUrl.origin(sourceOrigin.toString()))) return;
                     String method = message.getData();
-                    if (method != null && methods.contains(method)) receive.accept(method);
+                    if (method == null || !methods.contains(method)) return;
+                    // A terminal callback ends the carrier flow; deliver nothing after it.
+                    if (terminal.contains(method)) active = false;
+                    receive.accept(method);
                 });
         // Preserve the carrier's published method names. Only the main frame
         // gets the shim; Java independently verifies origin and main-frame status.
@@ -46,14 +49,18 @@ public final class PortalBridge implements AutoCloseable {
         script = WebViewCompat.addDocumentStartJavaScript(view, shim.toString(), allowedOrigins);
     }
 
-    /** Unsupported providers fail closed; no origin-blind legacy bridge fallback. */
+    /**
+     * Unsupported providers fail closed; no origin-blind legacy bridge fallback. A method in
+     * {@code terminal} is delivered at most once and closes the channel to later messages.
+     */
     public static PortalBridge install(WebView view, String url, String controller,
-            Set<String> methods, Consumer<String> receive) {
+            Set<String> methods, Set<String> terminal, Consumer<String> receive) {
         String origin = HttpsUrl.origin(url);
         if (origin == null || !controller.matches("[A-Za-z][A-Za-z0-9_]*")
                 || !WebViewFeature.isFeatureSupported(WebViewFeature.WEB_MESSAGE_LISTENER)
                 || !WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) return null;
-        return new PortalBridge(view, origin, controller, Set.copyOf(methods), receive);
+        return new PortalBridge(view, origin, controller, Set.copyOf(methods),
+                Set.copyOf(terminal), receive);
     }
 
     @Override public void close() {
