@@ -169,6 +169,21 @@ public class EntitlementConfiguration {
                 .orElse(DEFAULT_VALIDITY);
     }
 
+    /**
+     * Returns {@code true} if the stored characteristics are still valid: received less than
+     * {@code maxAgeMillis} ago, and within the VERS validity unless that has no duration.
+     */
+    public boolean isVersInValidityPeriod(long maxAgeMillis) {
+        long queryTimeMillis = mConfigurationsDataStore.getQueryTimeMillis();
+        long ageMillis = System.currentTimeMillis() - queryTimeMillis;
+        // An unset receive time or a clock moved backwards is treated as expired.
+        if (queryTimeMillis <= 0 || ageMillis < 0 || ageMillis >= maxAgeMillis) return false;
+        ClientBehavior behavior = entitlementValidation();
+        if (behavior == ClientBehavior.VALID_WITHOUT_DURATION) return true;
+        return behavior == ClientBehavior.VALID_DURING_VALIDITY
+                && ageMillis < TimeUnit.SECONDS.toMillis(getVersValidity());
+    }
+
     public enum ClientBehavior {
         /** Unknown behavior. */
         UNKNOWN_BEHAVIOR,

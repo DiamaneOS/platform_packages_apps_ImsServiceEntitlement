@@ -118,6 +118,9 @@ public class ImsEntitlementPollingService extends JobService {
     public static void scheduleRefresh(Context context, int subId) {
         if (!TelephonyUtils.isActivedSubId(context, subId)
                 || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(context, subId))) return;
+        // A pending provisioning repair schedules the refresh itself once its setters apply.
+        // A delayed refresh with the same job ID must not replace it.
+        if (JobManager.getInstance(context, COMPONENT_NAME, subId).isRepairPending()) return;
         EntitlementConfiguration configuration = new EntitlementConfiguration(context, subId);
         ClientBehavior behavior = configuration.entitlementValidation();
         if (behavior == ClientBehavior.VALID_DURING_VALIDITY) {
@@ -172,7 +175,9 @@ public class ImsEntitlementPollingService extends JobService {
         // deadline and admission rejection share this one main-thread path.
         // Retain scheduler-owned fallback until a successful refresh replacement
         // is accepted too. Carrier stop states have no refresh and remain terminal.
-        finishJob(task.mParams, task.mReschedule || task.refreshDelay != null);
+        boolean retry = task.mReschedule || task.refreshDelay != null;
+        if (!retry) task.jobManager.endRepair(task.scheduleTicket);
+        finishJob(task.mParams, retry);
         Executors.removeCancelledCarrierWork();
         // JobService queues its finish message on the main looper. Post after
         // that message before dispatching Binder-dependent scheduling/metrics.
@@ -221,6 +226,9 @@ public class ImsEntitlementPollingService extends JobService {
         private boolean mNeedsImsProvisioning;
         private boolean mReschedule;
         private Duration refreshDelay;
+        // A failed setter does not stop the others; the run is retried as a repair.
+        private boolean mProvisioningFailed;
+        private boolean mLastSetterApplied;
 
         // States for metrics
         private int mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__UNKNOWN_RESULT;
@@ -321,8 +329,7 @@ public class ImsEntitlementPollingService extends JobService {
         @WorkerThread
         private void doImsEntitlementCheck() {
             try {
-                EntitlementResult result = mImsEntitlementApi.checkPollingEntitlementStatus(
-                        this::ownsRun);
+                EntitlementResult result = pollingEntitlementStatus();
                 if (isCancelled() || !JobManager.isValidJob(
                         ImsEntitlementPollingService.this, mParams) || isCancelled()) return;
                 if (result == null) {
@@ -342,39 +349,39 @@ public class ImsEntitlementPollingService extends JobService {
 
                 if (shouldTurnOffWfc(result)) {
                     if (!applyProvisioning(result, () -> mImsUtils.setVowifiProvisioned(false))) return;
-                    mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
+                    mVowifiResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED);
                 } else if (result.getVowifiStatus().vowifiEntitled()) {
                     if (!applyProvisioning(result, () -> mImsUtils.setVowifiProvisioned(true))) return;
-                    mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
+                    mVowifiResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
                 }
 
                 if (!isCurrentResult(result)) return;
                 if (shouldTurnOffVolte(result)) {
                     if (!applyProvisioning(result, () -> mImsUtils.setVolteProvisioned(false))) return;
-                    mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
+                    mVolteResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED);
                 } else {
                     if (!applyProvisioning(result, () -> mImsUtils.setVolteProvisioned(true))) return;
-                    mVolteResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
+                    mVolteResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
                 }
 
                 if (!isCurrentResult(result)) return;
                 if (mEntitlementVersion >= ENTITLEMENT_VERSION_EIGHT) {
                     if (shouldTurnOffVonrHome(result)) {
                         if (!applyProvisioning(result, () -> mImsUtils.setVonrProvisioned(false))) return;
-                        mVonrResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
+                        mVonrResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED);
                     } else {
                         if (!applyProvisioning(result, () -> mImsUtils.setVonrProvisioned(true))) return;
-                        mVonrResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
+                        mVonrResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
                     }
                 }
 
                 if (!isCurrentResult(result)) return;
                 if (shouldTurnOffSMSoIP(result)) {
                     if (!applyProvisioning(result, () -> mImsUtils.setSmsoipProvisioned(false))) return;
-                    mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
+                    mSmsoipResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED);
                 } else {
                     if (!applyProvisioning(result, () -> mImsUtils.setSmsoipProvisioned(true))) return;
-                    mSmsoipResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
+                    mSmsoipResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED);
                 }
             } catch (RuntimeException e) {
                 mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
@@ -385,7 +392,8 @@ public class ImsEntitlementPollingService extends JobService {
                 Log.d(TAG, "Entitlement operation unavailable");
                 return;
             }
-            if (ownsRun()) checkVersValidity();
+            if (mProvisioningFailed) requestRepair();
+            else if (ownsRun()) checkVersValidity();
             else mReschedule = true;
         }
 
@@ -393,8 +401,7 @@ public class ImsEntitlementPollingService extends JobService {
         private void doWfcEntitlementCheck() {
             try {
                 if (!mImsUtils.isWfcEnabledByUser()) return;
-                EntitlementResult result = mImsEntitlementApi.checkPollingEntitlementStatus(
-                        this::ownsRun);
+                EntitlementResult result = pollingEntitlementStatus();
                 if (isCancelled() || !JobManager.isValidJob(
                         ImsEntitlementPollingService.this, mParams) || isCancelled()) return;
                 if (result == null) {
@@ -410,7 +417,7 @@ public class ImsEntitlementPollingService extends JobService {
 
                 if (shouldTurnOffWfc(result)) {
                     if (!applyProvisioning(result, mImsUtils::disableWfc)) return;
-                    mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED;
+                    mVowifiResult = setterResult(IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__DISABLED);
                 } else {
                     mVowifiResult = IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__ENABLED;
                 }
@@ -420,15 +427,46 @@ public class ImsEntitlementPollingService extends JobService {
                 Log.d(TAG, "Entitlement operation unavailable");
                 return;
             }
-            if (ownsRun()) checkVersValidity();
+            if (mProvisioningFailed) requestRepair();
+            else if (ownsRun()) checkVersValidity();
             else mReschedule = true;
         }
 
+        /**
+         * Applies one provisioning setter. Returns {@code false} only when the result is no longer
+         * current; a failed setter is remembered and the remaining setters still run.
+         */
         private boolean applyProvisioning(EntitlementResult result, java.util.function.Supplier<Boolean> setter) {
             if (!isCurrentResult(result)) return false;
-            boolean applied = setter.get();
-            if (!applied || !isCurrentResult(result)) { mReschedule = true; return false; }
-            return true;
+            try { mLastSetterApplied = Boolean.TRUE.equals(setter.get()); }
+            catch (RuntimeException unavailable) { mLastSetterApplied = false; }
+            if (!mLastSetterApplied) mProvisioningFailed = true;
+            return isCurrentResult(result);
+        }
+
+        private int setterResult(int appliedResult) {
+            return mLastSetterApplied ? appliedResult : IMS_SERVICE_ENTITLEMENT_UPDATED__APP_RESULT__FAILED;
+        }
+
+        /**
+         * The scheduler's retry of a run with a failed setter re-applies the stored carrier result
+         * while it is still valid, without authenticating with the carrier again. Without such a
+         * result (expired, reset, or the process restarted) the retry queries the carrier.
+         */
+        private EntitlementResult pollingEntitlementStatus() {
+            if (jobManager.isRepairRun(scheduleTicket)) {
+                // No older than a healthy client's refresh period.
+                EntitlementResult stored = mImsEntitlementApi.storedPollingEntitlementStatus(
+                        this::ownsRun, Duration.ofSeconds(MAX_REFRESH_SECONDS));
+                if (stored != null) return stored;
+            }
+            return mImsEntitlementApi.checkPollingEntitlementStatus(this::ownsRun);
+        }
+
+        /** Retry with the scheduler's backoff; the refresh is scheduled once all setters apply. */
+        private void requestRepair() {
+            if (ownsRun()) jobManager.requestRepair(scheduleTicket);
+            mReschedule = true;
         }
 
         private boolean isCurrentResult(EntitlementResult result) {

@@ -59,6 +59,7 @@ import org.mockito.junit.MockitoRule;
 
 import java.text.SimpleDateFormat;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.Date;
@@ -590,6 +591,44 @@ public class ImsEntitlementApiTest {
                 EntitlementConfiguration.RAW_XML_VERS_MINUS_TWO);
         setupImsEntitlementApi(mEntitlementConfiguration);
         assertThat(mImsEntitlementApi.checkPollingEntitlementStatus(() -> false)).isNull();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+    }
+
+    @Test
+    public void storedPollingResultReappliesValidConfigurationWithoutCarrierAuthentication()
+            throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO, MULTIPLE_APPIDS_RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        EntitlementResult result = mImsEntitlementApi.storedPollingEntitlementStatus(
+                () -> true, Duration.ofDays(1));
+        assertThat(result).isNotNull();
+        assertThat(mImsEntitlementApi.isResultCurrent(result)).isTrue();
+        assertThat(result.getVolteStatus().isActive()).isTrue();
+        assertThat(result.getSmsoveripStatus().isActive()).isTrue();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+    }
+
+    @Test
+    public void storedPollingResultExpiresAfterMaximumAge() throws Exception {
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO, MULTIPLE_APPIDS_RAW_XML);
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        assertThat(mImsEntitlementApi.storedPollingEntitlementStatus(() -> true, Duration.ZERO))
+                .isNull();
+        verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
+    }
+
+    @Test
+    public void storedPollingResultIgnoresResetOrCanceledState() throws Exception {
+        setupImsEntitlementApi(mEntitlementConfiguration);
+        assertThat(mImsEntitlementApi.storedPollingEntitlementStatus(() -> true, Duration.ofDays(1)))
+                .isNull();
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO,
+                EntitlementConfiguration.RAW_XML_VERS_MINUS_ONE);
+        assertThat(mImsEntitlementApi.storedPollingEntitlementStatus(() -> true, Duration.ofDays(1)))
+                .isNull();
+        mEntitlementConfiguration.update(ENTITLEMENT_VERSION_TWO, MULTIPLE_APPIDS_RAW_XML);
+        assertThat(mImsEntitlementApi.storedPollingEntitlementStatus(() -> false, Duration.ofDays(1)))
+                .isNull();
         verify(mMockServiceEntitlement, never()).queryEntitlementStatus(org.mockito.ArgumentMatchers.<String>anyList(), any());
     }
 

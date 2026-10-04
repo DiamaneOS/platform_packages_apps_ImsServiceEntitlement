@@ -160,6 +160,36 @@ public final class JobManagerTest {
         assertThat(manager.beginRun(accepted)).isGreaterThan(0);
     }
 
+    @Test public void schedulerRetryOfFailedProvisioningIsRepairUntilReplaced() {
+        long failed = manager.beginRun(0);
+        assertThat(manager.isRepairRun(failed)).isFalse();
+        manager.requestRepair(failed);
+        assertThat(manager.isRepairPending()).isTrue();
+        long retry = manager.beginRun(0);
+        assertThat(manager.isRepairRun(retry)).isTrue();
+        manager.queryEntitlementStatusOnceNetworkReady(0, Duration.ofHours(24));
+        assertThat(manager.isRepairPending()).isFalse();
+        ready.remove().run();
+        long successor = manager.beginRun(generation(scheduled.get(0)));
+        assertThat(manager.isRepairRun(successor)).isFalse();
+    }
+
+    @Test public void runFinishedWithoutRetryLeavesNoRepairPending() {
+        long failed = manager.beginRun(0);
+        manager.requestRepair(failed);
+        long retry = manager.beginRun(0);
+        manager.endRepair(retry);
+        assertThat(manager.isRepairPending()).isFalse();
+        assertThat(manager.isRepairRun(manager.beginRun(0))).isFalse();
+    }
+
+    @Test public void stoppedRunCannotRequestRepair() {
+        long ticket = manager.beginRun(0);
+        manager.endRun(ticket);
+        manager.requestRepair(ticket);
+        assertThat(manager.isRepairPending()).isFalse();
+    }
+
     private static long generation(JobInfo job) {
         return job.getExtras().getLong(JobManager.EXTRA_SCHEDULE_GENERATION);
     }
