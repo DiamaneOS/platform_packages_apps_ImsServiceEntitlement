@@ -9,9 +9,14 @@ trap 'rm -rf "$output"' EXIT HUP INT TERM
   src/com/android/imsserviceentitlement/utils/HttpsUrl.java \
   src/com/android/imsserviceentitlement/utils/CarrierTransport.java \
   src/com/android/imsserviceentitlement/utils/CarrierXml.java \
+  src/com/android/imsserviceentitlement/utils/CarrierExecutors.java \
+  src/com/android/imsserviceentitlement/utils/RequestScope.java \
+  tests/host/com/android/imsserviceentitlement/utils/RequestScopeTest.java \
   tests/host/com/android/imsserviceentitlement/utils/CarrierBoundaryTest.java
 "${JAVA_HOME:+$JAVA_HOME/bin/}java" -cp "$output" \
   com.android.imsserviceentitlement.utils.CarrierBoundaryTest
+"${JAVA_HOME:+$JAVA_HOME/bin/}java" -cp "$output" \
+  com.android.imsserviceentitlement.utils.RequestScopeTest
 python3 - <<'PY'
 from pathlib import Path
 import re

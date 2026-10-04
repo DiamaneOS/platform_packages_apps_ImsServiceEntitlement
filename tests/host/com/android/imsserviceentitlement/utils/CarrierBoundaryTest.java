@@ -26,7 +26,7 @@ public final class CarrierBoundaryTest {
         try { action.run(); } catch (IOException | SAXException expected) { return; }
         throw new AssertionError("unsafe input accepted");
     }
-    private static final class MemoryHttps extends HttpsURLConnection {
+    private static class MemoryHttps extends HttpsURLConnection {
         final byte[] body;
         final ByteArrayOutputStream sent = new ByteArrayOutputStream();
         boolean disconnected;
@@ -119,6 +119,36 @@ public final class CarrierBoundaryTest {
                 "<r>" + "é".repeat(CarrierTransport.MAX_RESPONSE_BYTES / 2) + "</r>"}) {
             rejected(() -> CarrierXml.parse(xml));
         }
-        System.out.println("Carrier HTTPS, bounded-stream and XML checks: PASS (no network)");
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+        RequestScope scope = new RequestScope(clock::get, java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20));
+        MemoryHttps[] dripConnection = new MemoryHttps[1];
+        URL slow = new URL(null, "https://carrier.example/slow", new URLStreamHandler() {
+            @Override protected URLConnection openConnection(URL value) {
+                return dripConnection[0] = new MemoryHttps(value, 16) {
+                    @Override public InputStream getInputStream() {
+                        return new ByteArrayInputStream(body) {
+                            @Override public synchronized int read(byte[] data, int offset, int length) {
+                                clock.addAndGet(java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(5));
+                                return super.read(data, offset, Math.min(1, length));
+                            }
+                        };
+                    }
+                };
+            }
+        });
+        scope.run(() -> {
+            try {
+                HttpURLConnection drip = CarrierTransport.open(slow);
+                drip.setReadTimeout(30_000);
+                InputStream stream = drip.getInputStream();
+                rejected(() -> stream.skip(16)); // Drips never exceed an individual read timeout.
+                check(clock.get() >= java.util.concurrent.TimeUnit.MILLISECONDS.toNanos(20));
+                check(dripConnection[0].getReadTimeout() > 0 && dripConnection[0].getReadTimeout() <= 20);
+                drip.disconnect();
+            } catch (Exception error) { throw new AssertionError(error); }
+            return null;
+        });
+        scope.close();
+        System.out.println("Carrier HTTPS, bounded-stream, XML and slow-drip deadline checks: PASS (no network)");
     }
 }

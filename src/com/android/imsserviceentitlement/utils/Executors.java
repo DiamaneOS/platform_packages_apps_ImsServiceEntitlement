@@ -19,6 +19,7 @@ package com.android.imsserviceentitlement.utils;
 import static android.os.AsyncTask.THREAD_POOL_EXECUTOR;
 
 import java.util.concurrent.Executor;
+import java.util.concurrent.ScheduledThreadPoolExecutor;
 
 /** Provides executors for running the tasks asynchronized. */
 public final class Executors {
@@ -29,7 +30,6 @@ public final class Executors {
 
     private static final Executor ASYNC_EXECUTOR = THREAD_POOL_EXECUTOR;
     private static final Executor DIRECT_EXECUTOR = Runnable::run;
-
     private Executors() {}
 
     /** Returns {@link Executor} executing tasks asynchronously. */
@@ -41,4 +41,11 @@ public final class Executors {
     public static Executor getDirectExecutor() {
         return DIRECT_EXECUTOR;
     }
+    public static Executor getCarrierExecutor() {
+        return sUseDirectExecutorForTest ? DIRECT_EXECUTOR : CarrierExecutors.carrier();
+    }
+    static ScheduledThreadPoolExecutor getDeadlineScheduler() { return CarrierExecutors.deadlines(); }
+    static void cleanupTransport(Runnable action) { CarrierExecutors.cleanup(action); }
+    public static void removeCancelledCarrierWork() { CarrierExecutors.purge(); }
+    public static Executor getSchedulingExecutor() { return sUseDirectExecutorForTest ? DIRECT_EXECUTOR : CarrierExecutors.scheduling(); }
 }
