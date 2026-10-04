@@ -6,6 +6,9 @@ import static com.google.common.truth.Truth.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.doAnswer;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import android.app.job.JobInfo;
 import android.app.job.JobScheduler;
@@ -91,11 +94,12 @@ public final class JobManagerTest {
     }
 
     @Test public void producerDuringSubscriptionLookupWins() {
-        when(configManager.getConfigForSubId(1)).thenAnswer(call -> {
-            when(configManager.getConfigForSubId(1)).thenReturn(configuration);
-            manager.queryEntitlementStatusOnceNetworkReady(2, Duration.ofSeconds(60));
+        AtomicBoolean first = new AtomicBoolean(true);
+        doAnswer(call -> {
+            if (first.getAndSet(false))
+                manager.queryEntitlementStatusOnceNetworkReady(2, Duration.ofSeconds(60));
             return configuration;
-        });
+        }).when(configManager).getConfigForSubId(1);
         manager.queryEntitlementStatusOnceNetworkReady(1, Duration.ofSeconds(30));
         ready.remove().run();
         assertThat(scheduled).isEmpty();
@@ -104,8 +108,12 @@ public final class JobManagerTest {
     }
 
     @Test public void schedulingFailureRetainsRecoveryUntilAccepted() {
-        when(scheduler.schedule(any())).thenReturn(JobScheduler.RESULT_FAILURE)
-                .thenAnswer(call -> { scheduled.add(call.getArgument(0)); return JobScheduler.RESULT_SUCCESS; });
+        AtomicInteger attempts = new AtomicInteger();
+        doAnswer(call -> {
+            if (attempts.getAndIncrement() == 0) return JobScheduler.RESULT_FAILURE;
+            scheduled.add(call.getArgument(0));
+            return JobScheduler.RESULT_SUCCESS;
+        }).when(scheduler).schedule(any());
         manager.queryEntitlementStatusOnceNetworkReady(2, Duration.ofSeconds(60));
         ready.remove().run();
         assertThat(delayed).hasSize(1);
