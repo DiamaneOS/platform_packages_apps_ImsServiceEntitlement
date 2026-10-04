@@ -74,6 +74,13 @@ public class EntitlementConfiguration {
     public Object generation() {
         return mConfigurationsDataStore.generation();
     }
+    public boolean deferRequests(Object generation, BooleanSupplier current, long delayMillis) {
+        return mConfigurationsDataStore.deferRequests(generation, current, delayMillis);
+    }
+    public boolean reconcileRetryPersistence(Object generation, BooleanSupplier current) {
+        return mConfigurationsDataStore.reconcileRetryPersistence(generation, current);
+    }
+    public long retryDelayMillis() { return mConfigurationsDataStore.retryDelayMillis(); }
 
     /** Atomically reject a late result after reset, replacement or cancellation. */
     public <T> T commitIfCurrent(Object generation, BooleanSupplier current, Supplier<T> action) {

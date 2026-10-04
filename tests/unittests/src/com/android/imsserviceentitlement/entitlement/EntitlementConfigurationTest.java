@@ -101,6 +101,16 @@ public class EntitlementConfigurationTest {
     }
 
     @Test
+    public void carrierDelaySurvivesNewFacadeAndResetClearsIt() {
+        assertThat(mConfiguration.deferRequests(mConfiguration.generation(), () -> true, 120_000)).isTrue();
+        long remaining = new EntitlementConfiguration(mContext, SUB_ID).retryDelayMillis();
+        assertThat(remaining).isGreaterThan(0);
+        assertThat(remaining).isAtMost(120_000);
+        mConfiguration.reset();
+        assertThat(mConfiguration.retryDelayMillis()).isEqualTo(0);
+    }
+
+    @Test
     public void updateConfigurations_verifyConfigs() {
         mConfiguration.update(ENTITLEMENT_VERSION, RAW_XML);
 

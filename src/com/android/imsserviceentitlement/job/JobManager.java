@@ -22,13 +22,18 @@ import android.app.job.JobScheduler;
 import android.content.ComponentName;
 import android.content.Context;
 import android.os.PersistableBundle;
+import android.os.Handler;
+import android.os.Looper;
+import com.android.imsserviceentitlement.utils.HttpsUrl;
 import android.telephony.SubscriptionManager;
 import android.util.ArrayMap;
 import android.util.Log;
 
 import androidx.annotation.GuardedBy;
+import androidx.annotation.VisibleForTesting;
 
 import com.android.imsserviceentitlement.utils.TelephonyUtils;
+import com.android.imsserviceentitlement.utils.Executors;
 
 import java.time.Duration;
 
@@ -43,21 +48,131 @@ public class JobManager {
 
     public static final String EXTRA_SLOT_ID = "SLOT_ID";
     public static final String EXTRA_RETRY_COUNT = "RETRY_COUNT";
+    public static final String EXTRA_SCHEDULE_GENERATION = "SCHEDULE_GENERATION";
 
     private final Context mContext;
     private final int mSubId;
     private final JobScheduler mJobScheduler;
     private final ComponentName mComponentName;
+    private final Handler mSchedulerHandler;
+    private final java.util.concurrent.Executor mSchedulingExecutor;
+    private long mGeneration;
+    private long mAcceptedGeneration;
+    private long mRunTicket;
+    private long mRunGeneration;
+    private Schedule mPending;
+    private boolean mDrainPosted;
+    private long mProvisioningOwner;
+    private static final long SCHEDULER_RETRY_MILLIS = JobInfo.DEFAULT_INITIAL_BACKOFF_MILLIS;
+    private static final class Schedule {
+        final long generation;
+        final int failures;
+        final Duration delay;
+        Schedule(long generation, int failures, Duration delay) {
+            this.generation = generation; this.failures = failures; this.delay = delay;
+        }
+    }
+
+    public synchronized long beginRun(long scheduledGeneration) {
+        if (mGeneration == 0 && scheduledGeneration > 0) {
+            mGeneration = scheduledGeneration;
+            mAcceptedGeneration = scheduledGeneration;
+        }
+        if (scheduledGeneration != mGeneration) return -1;
+        mRunTicket = Math.addExact(mRunTicket, 1);
+        mRunGeneration = mGeneration;
+        return mRunTicket;
+    }
+    public synchronized boolean isCurrentRun(long ticket) {
+        return ticket == mRunTicket && mRunGeneration == mGeneration;
+    }
+    public synchronized void endRun(long ticket) {
+        if (isCurrentRun(ticket)) mRunTicket = Math.addExact(mRunTicket, 1);
+    }
+    /** Nonblocking admission retained until physical setters return, even after timeout. */
+    public synchronized boolean enterProvisioning(long ticket) {
+        if (!isCurrentRun(ticket) || mProvisioningOwner != 0) return false;
+        mProvisioningOwner = ticket;
+        return true;
+    }
+    public synchronized void leaveProvisioning(long ticket) {
+        if (mProvisioningOwner == ticket) mProvisioningOwner = 0;
+    }
+    public void queryFromCompletedRun(long ticket, int failures, Duration delay) {
+        synchronized (this) {
+            if (!isCurrentRun(ticket)) return;
+            queueLocked(failures, delay);
+        }
+    }
+    private void queueLocked(int failures, Duration delay) {
+        mGeneration = Math.addExact(mGeneration, 1);
+        mPending = new Schedule(mGeneration, failures, delay);
+        if (!mDrainPosted) { mDrainPosted = true; mSchedulerHandler.post(this::submitSchedule); }
+    }
+    private void submitSchedule() {
+        try { mSchedulingExecutor.execute(this::drainSchedule); }
+        catch (java.util.concurrent.RejectedExecutionException saturated) {
+            mSchedulerHandler.postDelayed(this::submitSchedule, SCHEDULER_RETRY_MILLIS);
+        }
+    }
+    private void drainSchedule() {
+        Schedule intent;
+        synchronized (this) { intent = mPending; mPending = null; mDrainPosted = false; }
+        if (intent == null) return;
+        try {
+            if (!TelephonyUtils.isActivedSubId(mContext, mSubId)
+                    || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(mContext, mSubId))) {
+                synchronized (this) {
+                    if (mGeneration == intent.generation) {
+                        mGeneration = mAcceptedGeneration;
+                        mRunTicket = Math.addExact(mRunTicket, 1);
+                    }
+                }
+                return;
+            }
+            JobInfo job = newJobInfoBuilder(QUERY_ENTITLEMENT_STATUS_JOB_ID, intent.failures, intent.generation)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setMinimumLatency(intent.delay.toMillis()).build();
+            // All local producers publish on this one bounded worker. A newer producer
+            // queued during Binder lookup wins before the older mutation is issued.
+            synchronized (this) { if (mGeneration != intent.generation) return; }
+            if (mJobScheduler.schedule(job) == JobScheduler.RESULT_SUCCESS) {
+                synchronized (this) { mAcceptedGeneration = intent.generation; }
+                return;
+            }
+        } catch (RuntimeException unavailable) {
+            Log.w(TAG, "Carrier job scheduling unavailable");
+        }
+        synchronized (this) {
+            if (mGeneration != intent.generation) return;
+            mPending = intent;
+            if (!mDrainPosted) { mDrainPosted = true; mSchedulerHandler.postDelayed(this::submitSchedule, SCHEDULER_RETRY_MILLIS); }
+        }
+    }
+
 
     // Cache subscription id associated {@link JobManager} objects for reusing.
     @GuardedBy("JobManager.class")
     private static final ArrayMap<String, JobManager> sInstances = new ArrayMap<>();
 
     private JobManager(Context context, ComponentName componentName, int subId) {
+        this(context, componentName, subId, new Handler(Looper.getMainLooper()));
+    }
+
+    @VisibleForTesting
+    JobManager(Context context, ComponentName componentName, int subId, Handler handler) {
+        this(context, componentName, subId, handler, Executors.getSchedulingExecutor());
+    }
+
+    @VisibleForTesting
+    JobManager(Context context, ComponentName componentName, int subId, Handler handler,
+            java.util.concurrent.Executor scheduler) {
         this.mContext = context;
         this.mComponentName = componentName;
         this.mJobScheduler = context.getSystemService(JobScheduler.class);
         this.mSubId = subId;
+        this.mSchedulerHandler = handler;
+        this.mSchedulingExecutor = scheduler;
     }
 
     /** Returns {@link JobManager} instance. */
@@ -74,13 +189,9 @@ public class JobManager {
         return instance;
     }
 
-    private JobInfo.Builder newJobInfoBuilder(int jobId) {
-        return newJobInfoBuilder(jobId, 0 /* retryCount */);
-    }
-
-    private JobInfo.Builder newJobInfoBuilder(int jobId, int retryCount) {
+    private JobInfo.Builder newJobInfoBuilder(int jobId, int retryCount, long generation) {
         JobInfo.Builder builder = new JobInfo.Builder(getJobIdWithSubId(jobId), mComponentName);
-        putSubIdAndRetryExtra(builder, retryCount);
+        putSubIdAndRetryExtra(builder, retryCount, generation);
         return builder;
     }
 
@@ -103,11 +214,12 @@ public class JobManager {
         return jobId % JOB_ID_BASE_INDEX;
     }
 
-    private void putSubIdAndRetryExtra(JobInfo.Builder builder, int retryCount) {
+    private void putSubIdAndRetryExtra(JobInfo.Builder builder, int retryCount, long generation) {
         PersistableBundle bundle = new PersistableBundle();
         bundle.putInt(SubscriptionManager.EXTRA_SUBSCRIPTION_INDEX, mSubId);
         bundle.putInt(EXTRA_SLOT_ID, TelephonyUtils.getSlotId(mContext, mSubId));
         bundle.putInt(EXTRA_RETRY_COUNT, retryCount);
+        bundle.putLong(EXTRA_SCHEDULE_GENERATION, generation);
         builder.setExtras(bundle);
     }
 
@@ -123,19 +235,9 @@ public class JobManager {
 
     /** Checks Entitlement Status once has network connection with retry count and delay. */
     public void queryEntitlementStatusOnceNetworkReady(int retryCount, Duration delay) {
-        Log.d(
-                TAG,
-                "schedule QUERY_ENTITLEMENT_STATUS_JOB_ID once has network connection, "
-                        + "retryCount="
-                        + retryCount
-                        + ", delay="
-                        + delay);
-        JobInfo job =
-                newJobInfoBuilder(QUERY_ENTITLEMENT_STATUS_JOB_ID, retryCount)
-                        .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                        .setMinimumLatency(delay.toMillis())
-                        .build();
-        mJobScheduler.schedule(job);
+        if (retryCount < 0 || delay.isNegative()) throw new IllegalArgumentException("Invalid job request");
+        synchronized (this) { queueLocked(retryCount, delay); }
+
     }
 
 

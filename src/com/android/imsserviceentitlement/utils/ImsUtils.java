@@ -84,77 +84,88 @@ public class ImsUtils {
     }
 
     /** Returns {@link ImsUtils} instance. */
-    public static synchronized ImsUtils getInstance(Context context, int subId) {
-        ImsUtils instance = sInstances.get(subId);
-        if (instance != null) {
-            return instance;
+    public static ImsUtils getInstance(Context context, int subId) {
+        synchronized (ImsUtils.class) {
+            ImsUtils existing = sInstances.get(subId);
+            if (existing != null) return existing;
         }
-
-        instance = new ImsUtils(context, subId);
-        sInstances.put(subId, instance);
-        return instance;
+        // Carrier/framework lookups may block: do not hold the other SIM's cache monitor.
+        ImsUtils candidate = new ImsUtils(context, subId);
+        synchronized (ImsUtils.class) {
+            ImsUtils existing = sInstances.get(subId);
+            if (existing != null) return existing;
+            sInstances.put(subId, candidate);
+            return candidate;
+        }
     }
 
     /** Changes persistent WFC enabled setting. */
-    private void setWfcSetting(boolean enabled) {
+    private boolean setWfcSetting(boolean enabled) {
         try {
             mImsMmTelManager.setVoWiFiSettingEnabled(enabled);
+            return true;
         } catch (RuntimeException e) {
             // ignore this exception, possible exception should be NullPointerException or
             // RemoteException.
+            return false;
         }
     }
 
     /** Sets whether VoWiFi is provisioned. */
-    public void setVowifiProvisioned(boolean value) {
+    public boolean setVowifiProvisioned(boolean value) {
         try {
-            mProvisioningManager.setProvisioningIntValue(
+            return mProvisioningManager.setProvisioningIntValue(
                     KEY_VOICE_OVER_WIFI_ENABLED_OVERRIDE, value
                             ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
-                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED);
+                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED) == android.telephony.ims.stub.ImsConfigImplBase.CONFIG_RESULT_SUCCESS;
         } catch (RuntimeException e) {
             // ignore this exception, possible exception should be NullPointerException or
             // RemoteException.
+            return false;
         }
     }
 
     /** Sets whether Volte is provisioned. */
-    public void setVolteProvisioned(boolean value) {
+    public boolean setVolteProvisioned(boolean value) {
         try {
-            mProvisioningManager.setProvisioningIntValue(
+            return mProvisioningManager.setProvisioningIntValue(
                     KEY_VOLTE_PROVISIONING_STATUS, value
                             ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
-                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED);
+                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED) == android.telephony.ims.stub.ImsConfigImplBase.CONFIG_RESULT_SUCCESS;
         } catch (RuntimeException e) {
             // ignore this exception, possible exception should be NullPointerException or
             // RemoteException.
+            return false;
         }
     }
 
     /** Sets whether Vonr is provisioned. */
-    public void setVonrProvisioned(boolean value) {
-        setProvisioningIntValue(CAPABILITY_TYPE_VOICE, REGISTRATION_TECH_NR, value);
+    public boolean setVonrProvisioned(boolean value) {
+        return setProvisioningIntValue(CAPABILITY_TYPE_VOICE, REGISTRATION_TECH_NR, value);
     }
 
     /** Sets whether SMSoIP is provisioned. */
-    public void setSmsoipProvisioned(boolean value) {
+    public boolean setSmsoipProvisioned(boolean value) {
         try {
-            mProvisioningManager.setProvisioningIntValue(
+            return mProvisioningManager.setProvisioningIntValue(
                     KEY_SMS_OVER_IP_ENABLED, value
                             ? ProvisioningManager.PROVISIONING_VALUE_ENABLED
-                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED);
+                            : ProvisioningManager.PROVISIONING_VALUE_DISABLED) == android.telephony.ims.stub.ImsConfigImplBase.CONFIG_RESULT_SUCCESS;
         } catch (RuntimeException e) {
             // ignore this exception, possible exception should be NullPointerException or
             // RemoteException.
+            return false;
         }
     }
 
-    private void setProvisioningIntValue(int capability, int tech, boolean provisioned) {
+    private boolean setProvisioningIntValue(int capability, int tech, boolean provisioned) {
         try {
             mProvisioningManager.setProvisioningStatusForCapability(capability, tech, provisioned);
+            return true;
         } catch (RuntimeException e) {
             // ignore this exception, possible exception should be NullPointerException or
             // RemoteException.
+            return false;
         }
     }
 
@@ -236,7 +247,7 @@ public class ImsUtils {
     }
 
     /** Disables WFC */
-    public void disableWfc() {
-        setWfcSetting(false);
+    public boolean disableWfc() {
+        return setWfcSetting(false);
     }
 }
