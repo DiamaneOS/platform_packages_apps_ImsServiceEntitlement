@@ -14,8 +14,8 @@ TS.43 provisioning or a Wi-Fi-calling address portal.
 
 The client keeps SIM authentication and normal TLS certificate/hostname checks.
 It sends no notification token and does not pretend to support push. Server
-validity controls polling: shorter validity periods are honored, while longer or
-unlimited validity is refreshed daily. JobScheduler handles retry backoff after
+validity controls polling: refreshes have a thirty-second floor and a daily
+ceiling, while unlimited validity is refreshed daily. JobScheduler handles retry backoff after
 failure; server-directed stop states remain stopped.
 This cannot reproduce immediate carrier push notifications, and carriers that
 require that transport remain an explicit compatibility limit.
@@ -45,3 +45,20 @@ request loops while preserving longer carrier-directed delays. Existing host
 checks cover parser bounds and transport behavior. The application opts out of
 DiamaneOS's unused implicit motion-sensor permission; carrier HTTPS and phone
 provisioning permissions remain explicit.
+
+Each check has one 120-second lifetime covering admission, HTTPS, redirects,
+AKA/token renewal and local provisioning. This downstream budget is four ordinary
+30-second HTTP stages; it is not a carrier protocol timeout. Three physical
+workers and three queued checks cover the two active FP6 subscriptions and the
+activation UI. Cancellation does not create replacement capacity for a blocked
+framework/transport operation. Transport cleanup and serialized job scheduling
+have separate bounded workers; neither runs on the deadline or main thread.
+
+Ordinary failure uses Android JobScheduler's own exponential retry policy, without
+a permanent attempt cutoff. Carrier Retry-After establishes a subscription-local
+not-before timestamp; early framework retries do not make HTTPS or AKA requests.
+Accepted carrier stop states are reconciled locally after a setter failure, with
+the existing entitlement-version upgrade exception. A run/generation fence and
+nonblocking per-subscription provisioning gate prevent a late poll from applying
+a successor's state. Provisioning setters remain separate framework operations;
+a failed/expired sequence is retried rather than described as an atomic update.

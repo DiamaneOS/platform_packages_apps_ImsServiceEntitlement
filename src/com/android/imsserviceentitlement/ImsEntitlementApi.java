@@ -18,6 +18,7 @@ package com.android.imsserviceentitlement;
 
 import static java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME;
 import static java.time.temporal.ChronoUnit.SECONDS;
+import static com.android.imsserviceentitlement.ts43.Ts43Constants.EntitlementVersion.ENTITLEMENT_VERSION_EIGHT;
 
 import android.content.Context;
 import android.text.TextUtils;
@@ -38,6 +39,7 @@ import com.android.imsserviceentitlement.utils.TelephonyUtils;
 import com.android.imsserviceentitlement.utils.XmlDoc;
 import com.android.imsserviceentitlement.utils.HttpsUrl;
 import com.android.imsserviceentitlement.utils.CarrierTransport;
+import com.android.imsserviceentitlement.utils.RequestScope;
 import com.android.libraries.entitlement.CarrierConfig;
 import com.android.libraries.entitlement.ServiceEntitlement;
 import com.android.libraries.entitlement.ServiceEntitlementException;
@@ -73,6 +75,8 @@ public class ImsEntitlementApi {
             this.result = result;
         }
     }
+    // Same minimum as Android's ordinary first failure backoff; zero cannot spin AKA requests.
+    private static final long MIN_RETRY_AFTER_SECONDS = 30;
     private volatile AcceptedResult mAcceptedResult;
     private boolean mNeedsImsProvisioning;
 
@@ -127,11 +131,50 @@ public class ImsEntitlementApi {
     /** The caller's ownership/cancellation check is repeated before any cache mutation. */
     @Nullable
     public EntitlementResult checkEntitlementStatus(BooleanSupplier ownerCurrent) {
+        RequestScope existing = RequestScope.current();
+        if (existing == null) {
+            try (RequestScope scope = new RequestScope()) {
+                return scope.run(() -> checkEntitlementStatus(ownerCurrent));
+            }
+        }
         BooleanSupplier current = () -> !Thread.currentThread().isInterrupted()
-                && ownerCurrent.getAsBoolean() && !Thread.currentThread().isInterrupted();
-        mAcceptedResult = null;
+                && existing.isCurrent() && ownerCurrent.getAsBoolean()
+                && existing.isCurrent() && !Thread.currentThread().isInterrupted();
         return checkEntitlementStatus(current, mLastEntitlementConfiguration.generation(),
                 AUTHENTICATION_RETRIES);
+    }
+
+    /** Reconcile a carrier stop instruction locally; do not authenticate again to repair setters. */
+    @Nullable
+    public EntitlementResult checkPollingEntitlementStatus(BooleanSupplier ownerCurrent) {
+        RequestScope scope = RequestScope.current();
+        if (scope == null) {
+            try (RequestScope owned = new RequestScope()) {
+                return owned.run(() -> checkPollingEntitlementStatus(ownerCurrent));
+            }
+        }
+        BooleanSupplier current = () -> scope.isCurrent() && ownerCurrent.getAsBoolean()
+                && scope.isCurrent() && !Thread.currentThread().isInterrupted();
+        Object generation = mLastEntitlementConfiguration.generation();
+        // Snapshot local data under the cache monitor; XML and framework lookups run outside it.
+        String rawXml = mLastEntitlementConfiguration.commitIfCurrent(
+                generation, current, mLastEntitlementConfiguration::getRawXml);
+        XmlDoc document = new XmlDoc(rawXml);
+        ClientBehavior behavior = EntitlementConfiguration.entitlementValidation(document);
+        int configuredVersion = TelephonyUtils.getEntitlementVersion(mContext, mSubId);
+        boolean versionUpgrade = configuredVersion >= ENTITLEMENT_VERSION_EIGHT
+                && configuredVersion != mLastEntitlementConfiguration.getEntitlementVersion();
+        if (behavior != ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS
+                && behavior != ClientBehavior.NEEDS_TO_RESET_EXCEPT_VERS_UNTIL_SETTING_ON
+                || versionUpgrade) {
+            return checkEntitlementStatus(current, generation, AUTHENTICATION_RETRIES);
+        }
+        EntitlementResult result = toEntitlementResult(document, behavior);
+        return scope.accept(() -> mLastEntitlementConfiguration.commitIfCurrent(
+                generation, current, () -> {
+                    mAcceptedResult = new AcceptedResult(generation, result);
+                    return result;
+                }));
     }
 
     /** A result can be used only while its accepted cache generation remains current. */
@@ -154,6 +197,21 @@ public class ImsEntitlementApi {
         Log.d(TAG, "checkEntitlementStatus subId=" + mSubId);
         int entitlementVersion = TelephonyUtils.getEntitlementVersion(mContext, mSubId);
         try {
+            if (!mLastEntitlementConfiguration.reconcileRetryPersistence(generation, current)) return null;
+            Long deferred = mLastEntitlementConfiguration.commitIfCurrent(generation, current,
+                    mLastEntitlementConfiguration::retryDelayMillis);
+            if (deferred == null || deferred < 0) return null;
+            if (deferred > 0) {
+                boolean defaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
+                EntitlementResult delayed = EntitlementResult.builder(defaultActive)
+                        .setRetryAfterSeconds(deferred / 1000 + (deferred % 1000 == 0 ? 0 : 1))
+                        .build();
+                return RequestScope.current().accept(() -> mLastEntitlementConfiguration
+                        .commitIfCurrent(generation, current, () -> {
+                            mAcceptedResult = new AcceptedResult(generation, delayed);
+                            return delayed;
+                        }));
+            }
             ServiceEntitlementRequest request = mLastEntitlementConfiguration.commitIfCurrent(
                     generation, current, () -> {
                         ServiceEntitlementRequest.Builder builder = ServiceEntitlementRequest.builder();
@@ -176,19 +234,20 @@ public class ImsEntitlementApi {
                             ServiceEntitlement.APP_SMSOIP)
                             : ImmutableList.of(ServiceEntitlement.APP_VOWIFI),
                     request);
+            if (!current.getAsBoolean()) return null;
             XmlDoc entitlementXmlDoc = new XmlDoc(rawXml);
             if (!entitlementXmlDoc.isValid()) return null;
             ClientBehavior behavior = EntitlementConfiguration.entitlementValidation(entitlementXmlDoc);
             if (mNeedsImsProvisioning && behavior == ClientBehavior.UNKNOWN_BEHAVIOR) return null;
             EntitlementResult result = toEntitlementResult(entitlementXmlDoc, behavior);
-            return mLastEntitlementConfiguration.commitIfCurrent(generation, current, () -> {
+            return RequestScope.current().accept(() -> mLastEntitlementConfiguration.commitIfCurrent(generation, current, () -> {
                 mLastEntitlementConfiguration.update(entitlementVersion, rawXml);
                 if (mNeedsImsProvisioning && isResetToDefault(behavior)) {
                     mLastEntitlementConfiguration.reset(behavior);
                 }
                 mAcceptedResult = new AcceptedResult(mLastEntitlementConfiguration.generation(), result);
                 return result;
-            });
+            }));
         } catch (ServiceEntitlementException e) {
             if (e.getErrorCode() == ServiceEntitlementException.ERROR_HTTP_STATUS_NOT_SUCCESS) {
                 if (e.getHttpStatus() == RESPONSE_TOKEN_EXPIRED) {
@@ -212,13 +271,15 @@ public class ImsEntitlementApi {
                     long retryAfter = parseDelaySecondsByRetryAfter(e.getRetryAfter());
                     if (retryAfter < 0 || retryAfter > Long.MAX_VALUE / 1000) return null;
                     boolean isDefaultActive = TelephonyUtils.getDefaultStatus(mContext, mSubId);
-                    return mLastEntitlementConfiguration.commitIfCurrent(generation, current,
+                    if (!mLastEntitlementConfiguration.deferRequests(generation, current,
+                            Math.max(MIN_RETRY_AFTER_SECONDS, retryAfter) * 1000)) return null;
+                    return RequestScope.current().accept(() -> mLastEntitlementConfiguration.commitIfCurrent(generation, current,
                             () -> {
                                 EntitlementResult result = EntitlementResult.builder(isDefaultActive)
                                         .setRetryAfterSeconds(retryAfter).build();
                                 mAcceptedResult = new AcceptedResult(generation, result);
                                 return result;
-                            });
+                            }));
                 }
             }
             // The library exception can contain response bodies and credentials.
