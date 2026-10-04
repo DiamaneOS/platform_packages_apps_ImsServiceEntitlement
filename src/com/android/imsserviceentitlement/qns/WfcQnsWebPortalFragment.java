@@ -27,7 +27,6 @@ import android.util.Log;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -36,12 +35,16 @@ import android.widget.ProgressBar;
 import com.android.imsserviceentitlement.R;
 
 import androidx.fragment.app.Fragment;
+import java.util.Set;
+import com.android.imsserviceentitlement.utils.PortalBridge;
 
 /** A fragment of WebView to render emergency address web portal */
 public class WfcQnsWebPortalFragment extends Fragment {
   private static final String TAG = "IMSSE-WfcQnsWebPortalFragment";
 
   private static final String URL_KEY = "URL_KEY";
+  private PortalBridge mBridge;
+  private WebView mWebView;
 
   /** Public static constructor */
   public static WfcQnsWebPortalFragment newInstance(String url) {
@@ -72,6 +75,7 @@ public class WfcQnsWebPortalFragment extends Fragment {
 
     ProgressBar spinner = (ProgressBar) v.findViewById(R.id.loadingbar);
     WebView webView = (WebView) v.findViewById(R.id.webview);
+    mWebView = webView;
     webView.setWebViewClient(
         new WebViewClient() {
           private boolean hideLoader = false;
@@ -102,7 +106,19 @@ public class WfcQnsWebPortalFragment extends Fragment {
           }
         });
 
-    webView.addJavascriptInterface(new JsInterface(), JsInterface.OBJECT_NAME);
+    mBridge = PortalBridge.install(webView, url, "WiFiCallingWebViewController",
+        Set.of("cancelButtonClicked", "cancelButtonPressed", "phoneServicesAccountStatusChanged",
+            "CloseWebView"), method -> {
+          if (method.equals("cancelButtonClicked") || method.equals("CloseWebView")) {
+            Activity activity = getActivity();
+            if (activity != null) { activity.setResult(Activity.RESULT_CANCELED); activity.finish(); }
+          }
+        });
+    if (mBridge == null) {
+      Activity activity = getActivity();
+      if (activity != null) { activity.setResult(Activity.RESULT_CANCELED); activity.finish(); }
+      return v;
+    }
 
     WebSettings settings = webView.getSettings();
     settings.setDomStorageEnabled(true);
@@ -116,67 +132,15 @@ public class WfcQnsWebPortalFragment extends Fragment {
     return v;
   }
 
-  // JS interface required by Rogers web portal.
-  private class JsInterface {
-    /**
-     * Name of the JS controller object.
-     *
-     * <p>It's hard-coded in the JS; DO NOT change unless requested by Rogers.
-     */
-    public static final String OBJECT_NAME = "WiFiCallingWebViewController";
-
-    /**
-     * Finish the activity when the cancel button clicked.
-     *
-     * <p>The method name is hard-coded in the JS; DO NOT change unless requested by Rogers.
-     */
-    @JavascriptInterface
-    public void cancelButtonClicked() {
-      Log.d(TAG, "cancelButtonClicked()");
-      final Activity activity = WfcQnsWebPortalFragment.this.getActivity();
-      if (activity != null) {
-        activity.setResult(Activity.RESULT_CANCELED);
-        activity.finish();
-      }
+  @Override
+  public void onDestroyView() {
+    if (mBridge != null) { mBridge.close(); mBridge = null; }
+    if (mWebView != null) {
+      mWebView.stopLoading();
+      mWebView.setWebViewClient(new WebViewClient());
+      mWebView.destroy();
+      mWebView = null;
     }
-
-    /**
-     * This method is invoked in JS but no implementation required. So define it to avoid JS
-     * failure.
-     *
-     * <p>The method name is hard-coded in the JS; DO NOT change unless requested by Rogers.
-     */
-    @JavascriptInterface
-    public void cancelButtonPressed() {
-      Log.d(TAG, "cancelButtonPressed()");
-    }
-
-    /**
-     * This method is invoked in JS but no implementation required. So define it to avoid JS
-     * failure.
-     *
-     * <p>The method name is hard-coded in the JS; DO NOT change unless requested by Rogers.
-     */
-    @JavascriptInterface
-    public void phoneServicesAccountStatusChanged() {
-      Log.d(TAG, "phoneServicesAccountStatusChanged()");
-      // No-op
-    }
-
-    /**
-     * Finish the activity when onCloseWebView() is called.
-     *
-     * <p>The method name is hard-coded in the JS; DO NOT change unless requested by Bell.
-     */
-    @JavascriptInterface
-    @SuppressWarnings("checkstyle:MethodName")
-    public void CloseWebView() {
-      Log.d(TAG, "CloseWebView()");
-      final Activity activity = WfcQnsWebPortalFragment.this.getActivity();
-      if (activity != null) {
-        activity.setResult(Activity.RESULT_CANCELED);
-        activity.finish();
-      }
-    }
+    super.onDestroyView();
   }
 }

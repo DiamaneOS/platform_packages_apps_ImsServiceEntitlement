@@ -29,7 +29,6 @@ import android.view.LayoutInflater;
 import android.view.View;
 import android.view.View.OnAttachStateChangeListener;
 import android.view.ViewGroup;
-import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -37,7 +36,8 @@ import android.widget.ProgressBar;
 
 import androidx.fragment.app.Fragment;
 
-import java.util.concurrent.Executor;
+import java.util.Set;
+import com.android.imsserviceentitlement.utils.PortalBridge;
 
 /** A fragment of WebView to render WFC T&C and emergency address web portal */
 public class WfcWebPortalFragment extends Fragment {
@@ -51,6 +51,7 @@ public class WfcWebPortalFragment extends Fragment {
 
     private WebView mWebView;
     private boolean mFinishFlow = false;
+    private PortalBridge mBridge;
 
     /** Public static constructor */
     public static WfcWebPortalFragment newInstance(String url, String postData) {
@@ -115,7 +116,21 @@ public class WfcWebPortalFragment extends Fragment {
                         }
                     }
                 });
-        mWebView.addJavascriptInterface(new JsInterface(getActivity()), JS_CONTROLLER_NAME);
+        mBridge = PortalBridge.install(mWebView, url, JS_CONTROLLER_NAME,
+                Set.of("entitlementChanged", "dismissFlow"), method -> {
+                    if (getActivity() == null) return;
+                    WfcActivationUi ui = (WfcActivationUi) getActivity();
+                    if (method.equals("entitlementChanged")) {
+                        mFinishFlow = true;
+                        ui.getController().finishFlow();
+                    } else {
+                        ui.setResultAndFinish(Activity.RESULT_CANCELED);
+                    }
+                });
+        if (mBridge == null) {
+            ((WfcActivationUi) getActivity()).setResultAndFinish(Activity.RESULT_CANCELED);
+            return v;
+        }
         WebSettings settings = mWebView.getSettings();
         settings.setDomStorageEnabled(true);
         settings.setJavaScriptEnabled(true);
@@ -149,35 +164,15 @@ public class WfcWebPortalFragment extends Fragment {
         return false;
     }
 
-    /** Emergency address websheet javascript callback. */
-    private class JsInterface {
-        private final WfcActivationUi mUi;
-        private final Executor mMainExecutor;
-
-        JsInterface(Activity activity) {
-            mUi = (WfcActivationUi) activity;
-            mMainExecutor = activity.getMainExecutor();
+    @Override
+    public void onDestroyView() {
+        if (mBridge != null) { mBridge.close(); mBridge = null; }
+        if (mWebView != null) {
+            mWebView.stopLoading();
+            mWebView.setWebViewClient(new WebViewClient());
+            mWebView.destroy();
+            mWebView = null;
         }
-
-        /**
-         * Callback function when the VoWiFi service flow ends properly between the device and the
-         * VoWiFi portal web server.
-         */
-        @JavascriptInterface
-        public void entitlementChanged() {
-            Log.d(TAG, "#entitlementChanged");
-            mFinishFlow = true;
-            mMainExecutor.execute(() -> mUi.getController().finishFlow());
-        }
-
-        /**
-         * Callback function when the VoWiFi service flow ends prematurely, either by user
-         * action or due to a web sheet or network error.
-         */
-        @JavascriptInterface
-        public void dismissFlow() {
-            Log.d(TAG, "#dismissFlow");
-            mUi.setResultAndFinish(Activity.RESULT_CANCELED);
-        }
+        super.onDestroyView();
     }
 }
