@@ -3,16 +3,16 @@
 This fork keeps Android's carrier HTTPS activation and polling client, without
 its Firebase/Google push components and dependencies. It replaces the
 `ImsServiceEntitlement` module inherited from Android's telephony product. It
-is not the IMS service, an emergency dialler or an AML implementation.
+is not the IMS service.
 
 ## When it runs
 
 Use is carrier-specific.
 
-- The inspected FP6 factory configuration and current source carrier assets
-  configure no IMS entitlement URL, activation activity, FCM sender or
-  background IMS provisioning. Their presence is not a reason to force
-  activation.
+- The FP6 factory configuration and the source carrier assets configure no IMS
+  entitlement URL, activation activity, FCM sender or background IMS
+  provisioning.
+- The package being installed is not a reason to force activation.
 - With no carrier HTTPS endpoint, the client makes no entitlement request.
 - Carrier-authorized configuration may enable it for networks that need TS.43
   provisioning or a Wi-Fi-calling address portal.
@@ -27,16 +27,14 @@ Use is carrier-specific.
 - Portals block non-HTTPS navigation, local file/content access and mixed
   content.
 - Failed queries keep existing provisioning and never count as approval.
-  SIM/job validity is rechecked after the network response. An explicit carrier
-  denial may still revoke provisioning.
+- SIM/job validity is rechecked after the network response.
+- An explicit carrier denial may still revoke provisioning.
 - Permissions: the necessary phone-state/provisioning permissions and ordinary
-  Internet access, with its own application UID and no platform signing. It
-  opts out of DiamaneOS's unused implicit motion-sensor permission; carrier
-  HTTPS and phone provisioning permissions stay explicit.
+  Internet access, with its own application UID and no platform signing.
+- It opts out of DiamaneOS's implicit motion-sensor permission, which it does
+  not use; carrier HTTPS and phone provisioning permissions stay explicit.
 - Include `diamaneos/board.mk` for its dedicated SELinux domain. It cannot speak
   directly to the modem.
-- Runtime permission, domain and carrier behavior still need native
-  qualification.
 
 ## Polling and retries
 
@@ -45,9 +43,9 @@ Use is carrier-specific.
 - Ordinary failure uses JobScheduler's own exponential retry backoff, with no
   permanent attempt cutoff. Server-directed stop states stay stopped.
 - A thirty-second minimum Retry-After delay prevents tight request loops but
-  keeps longer carrier-directed delays. Carrier Retry-After sets a
-  subscription-local not-before time; early framework retries make no HTTPS or
-  AKA requests.
+  keeps longer carrier-directed delays.
+- Carrier Retry-After sets a subscription-local not-before time; early
+  framework retries make no HTTPS or AKA requests.
 - Immediate carrier push notifications cannot be reproduced. Carriers that
   require that transport are an explicit compatibility limit.
 - Accepted carrier stop states are reconciled locally after a setter failure,
@@ -66,8 +64,9 @@ Containment choices, not TS.43 carrier requirements or protocol timeouts:
 - One 120-second lifetime per check, covering admission, HTTPS, redirects,
   AKA/token renewal and local provisioning: four ordinary 30-second HTTP stages.
 - Three physical workers and three queued checks cover the two active FP6
-  subscriptions and the activation UI. Cancellation does not create
-  replacement capacity for a blocked framework/transport operation.
+  subscriptions and the activation UI.
+- Cancellation does not create replacement capacity for a blocked
+  framework/transport operation.
 - Transport cleanup and serialized job scheduling have separate bounded
   workers; neither runs on the deadline or main thread.
 
@@ -77,5 +76,5 @@ Containment choices, not TS.43 carrier requirements or protocol timeouts:
   stream-limit, parser-bound and XML tests.
 - The existing `ImsServiceEntitlementUnitTests` exercise Android
   service/activation flows with mocks after a platform test build.
-- No host test proves carrier activation, Wi-Fi calling or emergency-address
-  registration.
+- Host tests do not cover carrier activation, Wi-Fi calling or
+  emergency-address registration.
