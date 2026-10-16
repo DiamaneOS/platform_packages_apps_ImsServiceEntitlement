@@ -1,6 +1,6 @@
 #!/bin/sh
 # SPDX-License-Identifier: Apache-2.0
-# Compiles production boundaries and exercises memory-only transports; no phone/network.
+# Compiles production boundaries and exercises memory-only transports. No phone/network.
 set -eu
 cd "$(dirname "$0")/.."
 output=$(mktemp -d)

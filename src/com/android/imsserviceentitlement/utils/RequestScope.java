@@ -40,7 +40,7 @@ public final class RequestScope implements AutoCloseable {
     public synchronized int remainingMillis() throws IOException {
         long remaining = budgetNanos - (clock.getAsLong() - started);
         if (revoked || finished || remaining <= 0) throw new SocketTimeoutException("Carrier request ended");
-        // Zero means unlimited to URLConnection; always round positive budgets up.
+        // Zero means unlimited to URLConnection. Always round positive budgets up.
         return (int) Math.min(Integer.MAX_VALUE, Math.max(1,
                 TimeUnit.NANOSECONDS.toMillis(remaining) + (remaining % 1_000_000 == 0 ? 0 : 1)));
     }

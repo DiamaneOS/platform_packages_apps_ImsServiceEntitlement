@@ -30,12 +30,12 @@ public final class PortalBridge implements AutoCloseable {
                             || !origin.equals(HttpsUrl.origin(sourceOrigin.toString()))) return;
                     String method = message.getData();
                     if (method == null || !methods.contains(method)) return;
-                    // A terminal callback ends the carrier flow; deliver nothing after it.
+                    // A terminal callback ends the carrier flow. Deliver nothing after it.
                     if (terminal.contains(method)) active = false;
                     receive.accept(method);
                 });
         // Preserve the carrier's published method names. Only the main frame
-        // gets the shim; Java independently verifies origin and main-frame status.
+        // gets the shim. Java independently verifies origin and main-frame status.
         StringBuilder shim = new StringBuilder("if(window===window.top){window.")
                 .append(controller).append("={");
         for (String method : methods) {
@@ -50,7 +50,7 @@ public final class PortalBridge implements AutoCloseable {
     }
 
     /**
-     * Unsupported providers fail closed; no origin-blind legacy bridge fallback. A method in
+     * Unsupported providers fail closed. No origin-blind legacy bridge fallback. A method in
      * {@code terminal} is delivered at most once and closes the channel to later messages.
      */
     public static PortalBridge install(WebView view, String url, String controller,

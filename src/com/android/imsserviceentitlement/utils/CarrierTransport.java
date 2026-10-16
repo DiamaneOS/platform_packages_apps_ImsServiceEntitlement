@@ -56,7 +56,7 @@ public final class CarrierTransport extends HttpURLConnection {
     }
 
     private void beforeIo() throws IOException {
-        if (mScope == null) return; // Host seam; production checks install a scope.
+        if (mScope == null) return; // Host seam. Production checks install a scope.
         mScope.check();
         int remaining = mScope.remainingMillis();
         mConnection.setConnectTimeout(mConnectTimeout > 0 ? Math.min(mConnectTimeout, remaining) : remaining);

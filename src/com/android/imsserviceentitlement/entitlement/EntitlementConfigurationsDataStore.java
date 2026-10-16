@@ -43,7 +43,7 @@ class EntitlementConfigurationsDataStore {
     static final long MAX_RETRY_DELAY_MILLIS = 24 * 60 * 60 * 1000L;
 
     private final SharedPreferences mPreferences;
-    // Only retry-metadata writers use this gate; no cache/scope monitor spans disk IO.
+    // Only retry-metadata writers use this gate. No cache/scope monitor spans disk IO.
     private final Object mRetryPersistenceLock = new Object();
     private volatile RetryDeadline mPendingRetry;
     private RetryDeadline mConfirmedRetry; // this monitor only
@@ -176,7 +176,7 @@ class EntitlementConfigurationsDataStore {
         });
         if (!Boolean.TRUE.equals(admitted)) return false;
         // commit updates preference memory before disk. Readers deliberately use
-        // only the confirmed snapshot; pending/failed writes remain retryable.
+        // only the confirmed snapshot. Pending/failed writes remain retryable.
         boolean saved = mPreferences.edit().putString(RETRY_OWNER, proposed.owner)
                 .putLong(RETRY_NOT_BEFORE_MILLIS, proposed.wallDue)
                 .putLong(RETRY_ELAPSED_DUE, proposed.elapsedDue).putInt(RETRY_BOOT, proposed.boot).commit();

@@ -63,7 +63,7 @@ public class JobManager {
     private Schedule mPending;
     private boolean mDrainPosted;
     private long mProvisioningOwner;
-    private long mRepairGeneration = -1; // Process memory only; schedule generations are >= 0.
+    private long mRepairGeneration = -1; // Process memory only. Schedule generations are >= 0.
     private static final long SCHEDULER_RETRY_MILLIS = JobInfo.DEFAULT_INITIAL_BACKOFF_MILLIS;
     private static final class Schedule {
         final long generation;

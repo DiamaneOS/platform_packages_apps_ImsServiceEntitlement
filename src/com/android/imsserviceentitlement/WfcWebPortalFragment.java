@@ -116,7 +116,7 @@ public class WfcWebPortalFragment extends Fragment {
                         }
                     }
                 });
-        // Both carrier methods end the flow; the bridge delivers only the first one.
+        // Both carrier methods end the flow. The bridge delivers only the first one.
         Set<String> methods = Set.of("entitlementChanged", "dismissFlow");
         mBridge = PortalBridge.install(mWebView, url, JS_CONTROLLER_NAME, methods, methods,
                 method -> {

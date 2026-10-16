@@ -38,8 +38,8 @@ public final class CarrierXml {
         // Preserve the upstream workaround for carrier portals that send bare
         // ampersands in URL values. Check size/declarations before rewriting.
         body = body.replace("&", "&amp;").replace("&amp;amp;", "&amp;");
-        // Bound structure before building a DOM. TS.43 documents are shallow;
-        // a response must not turn a privileged app into an unbounded parser.
+        // Bound structure before building a DOM. TS.43 documents are shallow.
+        // A response must not turn a privileged app into an unbounded parser.
         XMLReader reader = SAXParserFactory.newInstance().newSAXParser().getXMLReader();
         DefaultHandler errors = new DefaultHandler() {
             @Override public void error(SAXParseException error) throws SAXException { throw error; }

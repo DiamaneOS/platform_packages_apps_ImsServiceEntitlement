@@ -3,9 +3,9 @@
 package com.android.imsserviceentitlement.utils;
 import java.util.concurrent.*;
 
-/** Physical admission and cleanup pools; interruption never creates replacement capacity. */
+/** Physical admission and cleanup pools. Interruption never creates replacement capacity. */
 final class CarrierExecutors {
-    // Two active FP6 subscriptions plus one activation UI. Timed-out workers
+    // Two active subscriptions (dual SIM) plus one activation UI. Timed-out workers
     // continue occupying these slots until their physical operation exits.
     private static final int CARRIER_WORKERS = 3;
     private static final int PENDING_CARRIER_CHECKS = 3;
@@ -28,6 +28,6 @@ final class CarrierExecutors {
     static void purge() { CARRIER_EXECUTOR.purge(); }
     static void cleanup(Runnable action) {
         try { CLEANUP.execute(action); }
-        catch (RejectedExecutionException saturated) { /* Revocation still holds; physical capacity stays bounded. */ }
+        catch (RejectedExecutionException saturated) { /* Revocation still holds. Physical capacity stays bounded. */ }
     }
 }

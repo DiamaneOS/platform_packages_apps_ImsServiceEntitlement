@@ -14,7 +14,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/** Real private test preferences, injected clocks; no phone or carrier operations. */
+/** Real private test preferences, injected clocks. No phone or carrier operations. */
 @RunWith(AndroidJUnit4.class)
 public final class RetryDeadlineTest {
     private final AtomicLong wall = new AtomicLong(1_000_000);

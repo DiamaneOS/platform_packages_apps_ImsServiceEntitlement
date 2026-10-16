@@ -23,7 +23,7 @@ public final class HttpsUrl {
         }
     }
 
-    /** Exact HTTPS origin for bridge authorization; never a wildcard rule. */
+    /** Exact HTTPS origin for bridge authorization. Never a wildcard rule. */
     public static String origin(String value) {
         if (!isAllowed(value)) return null;
         try {

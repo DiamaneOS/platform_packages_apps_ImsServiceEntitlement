@@ -22,7 +22,7 @@ android_test {
     name: "ImsServiceEntitlementUnitTests",
     srcs: ["src/**/*.java"],
     manifest: "AndroidManifest.xml",
-    // Unit tests use mocked carrier services; inherit resources/code, not live app components.
+    // Unit tests use mocked carrier services. Inherit resources/code, not live app components.
     dont_merge_manifests: true,
     // Keep the library's Java/resource namespace, but never replace the live carrier app.
     aaptflags: [

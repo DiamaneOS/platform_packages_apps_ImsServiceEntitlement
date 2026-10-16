@@ -114,7 +114,7 @@ public class ImsEntitlementPollingService extends JobService {
                 .queryEntitlementStatusOnceNetworkReady(0, Duration.ofSeconds(delayInSeconds));
     }
 
-    /** Refresh only an active, valid carrier configuration; preserve server stop states. */
+    /** Refresh only an active, valid carrier configuration. Preserve server stop states. */
     public static void scheduleRefresh(Context context, int subId) {
         if (!TelephonyUtils.isActivedSubId(context, subId)
                 || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(context, subId))) return;
@@ -226,7 +226,7 @@ public class ImsEntitlementPollingService extends JobService {
         private boolean mNeedsImsProvisioning;
         private boolean mReschedule;
         private Duration refreshDelay;
-        // A failed setter does not stop the others; the run is retried as a repair.
+        // A failed setter does not stop the others. The run is retried as a repair.
         private boolean mProvisioningFailed;
         private boolean mLastSetterApplied;
 
@@ -281,8 +281,8 @@ public class ImsEntitlementPollingService extends JobService {
             if (!JobManager.isValidJob(ImsEntitlementPollingService.this, mParams)
                     || !HttpsUrl.isAllowed(TelephonyUtils.getEntitlementServerUrl(
                             ImsEntitlementPollingService.this, mSubid))) return null;
-            // Binder-dependent setup also occupies a bounded physical worker;
-            // it must not prevent the main-thread deadline from finishing a job.
+            // Binder-dependent setup also occupies a bounded physical worker.
+            // It must not prevent the main-thread deadline from finishing a job.
             initializeWorker();
             if (!ownsRun()) { mReschedule = true; return null; }
             if (!JobManager.isValidJob(ImsEntitlementPollingService.this, mParams)) return null;
@@ -434,7 +434,7 @@ public class ImsEntitlementPollingService extends JobService {
 
         /**
          * Applies one provisioning setter. Returns {@code false} only when the result is no longer
-         * current; a failed setter is remembered and the remaining setters still run.
+         * current. A failed setter is remembered and the remaining setters still run.
          */
         private boolean applyProvisioning(EntitlementResult result, java.util.function.Supplier<Boolean> setter) {
             if (!isCurrentResult(result)) return false;
@@ -463,7 +463,7 @@ public class ImsEntitlementPollingService extends JobService {
             return mImsEntitlementApi.checkPollingEntitlementStatus(this::ownsRun);
         }
 
-        /** Retry with the scheduler's backoff; the refresh is scheduled once all setters apply. */
+        /** Retry with the scheduler's backoff. The refresh is scheduled once all setters apply. */
         private void requestRepair() {
             if (ownsRun()) jobManager.requestRepair(scheduleTicket);
             mReschedule = true;

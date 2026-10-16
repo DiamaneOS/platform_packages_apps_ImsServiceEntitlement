@@ -31,7 +31,7 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-/** Deterministic scheduling races; all subscription/scheduler services are mocked. */
+/** Deterministic scheduling races. All subscription/scheduler services are mocked. */
 @RunWith(AndroidJUnit4.class)
 public final class JobManagerTest {
     private final ArrayDeque<Runnable> ready = new ArrayDeque<>();

@@ -5,7 +5,7 @@ import java.net.SocketTimeoutException;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.*;
 
-/** Production lifetime/backoff/admission logic with injected time; no network. */
+/** Production lifetime/backoff/admission logic with injected time. No network. */
 public final class RequestScopeTest {
     private static void check(boolean value) { if (!value) throw new AssertionError(); }
     public static void main(String[] args) throws Exception {
@@ -79,6 +79,6 @@ public final class RequestScopeTest {
         catch (SocketTimeoutException expected) { }
         expiring.close();
         System.out.println("Request lifetime, deadline and physical admission: PASS");
-        System.exit(0); // Only this standalone host runner; production pools live with the Android process.
+        System.exit(0); // Only this standalone host runner. Production pools live with the Android process.
     }
 }

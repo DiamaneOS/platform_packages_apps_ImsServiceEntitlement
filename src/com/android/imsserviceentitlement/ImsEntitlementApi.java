@@ -76,9 +76,9 @@ public class ImsEntitlementApi {
             this.result = result;
         }
     }
-    // Same minimum as Android's ordinary first failure backoff; zero cannot spin AKA requests.
+    // Same minimum as Android's ordinary first failure backoff. Zero cannot spin AKA requests.
     private static final long MIN_RETRY_AFTER_SECONDS = 30;
-    // A carrier delay is stored and also blocks the activation UI; cap it at the refresh period.
+    // A carrier delay is stored and also blocks the activation UI. Cap it at the refresh period.
     @VisibleForTesting
     static final long MAX_RETRY_AFTER_SECONDS = 24 * 60 * 60;
     private volatile AcceptedResult mAcceptedResult;
@@ -148,7 +148,7 @@ public class ImsEntitlementApi {
                 AUTHENTICATION_RETRIES);
     }
 
-    /** Reconcile a carrier stop instruction locally; do not authenticate again to repair setters. */
+    /** Reconcile a carrier stop instruction locally. Do not authenticate again to repair setters. */
     @Nullable
     public EntitlementResult checkPollingEntitlementStatus(BooleanSupplier ownerCurrent) {
         RequestScope scope = RequestScope.current();
@@ -160,7 +160,7 @@ public class ImsEntitlementApi {
         BooleanSupplier current = () -> scope.isCurrent() && ownerCurrent.getAsBoolean()
                 && scope.isCurrent() && !Thread.currentThread().isInterrupted();
         Object generation = mLastEntitlementConfiguration.generation();
-        // Snapshot local data under the cache monitor; XML and framework lookups run outside it.
+        // Snapshot local data under the cache monitor. XML and framework lookups run outside it.
         String rawXml = mLastEntitlementConfiguration.commitIfCurrent(
                 generation, current, mLastEntitlementConfiguration::getRawXml);
         XmlDoc document = new XmlDoc(rawXml);
