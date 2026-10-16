@@ -9,9 +9,9 @@ is not the IMS service.
 
 Use is carrier-specific.
 
-- The FP6 factory configuration and the source carrier assets configure no IMS
-  entitlement URL, activation activity, FCM sender or background IMS
-  provisioning.
+- The supported devices' factory configuration and the source carrier assets
+  configure no IMS entitlement URL, activation activity, FCM sender or
+  background IMS provisioning.
 - The package being installed is not a reason to force activation.
 - With no carrier HTTPS endpoint, the client makes no entitlement request.
 - Carrier-authorized configuration may enable it for networks that need TS.43
@@ -32,19 +32,19 @@ Use is carrier-specific.
 - Permissions: the necessary phone-state/provisioning permissions and ordinary
   Internet access, with its own application UID and no platform signing.
 - It opts out of DiamaneOS's implicit motion-sensor permission, which it does
-  not use; carrier HTTPS and phone provisioning permissions stay explicit.
+  not use. Carrier HTTPS and phone provisioning permissions stay explicit.
 - Include `diamaneos/board.mk` for its dedicated SELinux domain. It cannot speak
   directly to the modem.
 
 ## Polling and retries
 
-- Server validity controls polling: a thirty-second floor and a daily ceiling;
-  unlimited validity refreshes daily.
+- Server validity controls polling: a thirty-second floor and a daily ceiling.
+  Unlimited validity refreshes daily.
 - Ordinary failure uses JobScheduler's own exponential retry backoff, with no
   permanent attempt cutoff. Server-directed stop states stay stopped.
 - A thirty-second minimum Retry-After delay prevents tight request loops but
   keeps longer carrier-directed delays.
-- Carrier Retry-After sets a subscription-local not-before time; early
+- Carrier Retry-After sets a subscription-local not-before time. Early
   framework retries make no HTTPS or AKA requests.
 - Immediate carrier push notifications cannot be reproduced. Carriers that
   require that transport are an explicit compatibility limit.
@@ -52,7 +52,7 @@ Use is carrier-specific.
   with the existing entitlement-version upgrade exception.
 - A run/generation fence and a nonblocking per-subscription provisioning gate
   stop a late poll from applying a successor's state.
-- Provisioning setters stay separate framework operations; a failed/expired
+- Provisioning setters stay separate framework operations. A failed/expired
   sequence is retried, not described as an atomic update.
 
 ## Downstream budgets
@@ -63,12 +63,12 @@ Containment choices, not TS.43 carrier requirements or protocol timeouts:
   byte cap.
 - One 120-second lifetime per check, covering admission, HTTPS, redirects,
   AKA/token renewal and local provisioning: four ordinary 30-second HTTP stages.
-- Three physical workers and three queued checks cover the two active FP6
-  subscriptions and the activation UI.
+- Three physical workers and three queued checks cover two active
+  subscriptions (dual SIM) and the activation UI.
 - Cancellation does not create replacement capacity for a blocked
   framework/transport operation.
 - Transport cleanup and serialized job scheduling have separate bounded
-  workers; neither runs on the deadline or main thread.
+  workers. Neither runs on the deadline or main thread.
 
 ## Tests
 
